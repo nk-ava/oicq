@@ -159,7 +159,7 @@ export abstract class Contactable {
 		}
 		const ip = rsp[6+j]?.[0] || rsp[6+j]
 		const port = rsp[7+j]?.[0] || rsp[7+j]
-		return highwayUpload.call(
+		return await highwayUpload.call(
 			this.c,
 			img.readable,
 			{
