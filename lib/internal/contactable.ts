@@ -91,9 +91,9 @@ export abstract class Contactable {
 				10: img.width,
 				11: img.height,
 				12: img.type,
-				13: this.c.apk.version,
+				13: "8.2.7.4410", //this.c.apk.version,
 				14: 0,
-				15: 1052,
+				15: 1006,
 				16: img.origin ? 1 : 0,
 				18: 0,
 				19: 0,
@@ -198,8 +198,13 @@ export abstract class Contactable {
 
 	/** 上传一个视频以备发送(理论上传一次所有群和好友都能发) */
 	async uploadVideo(elem: VideoElem): Promise<VideoElem> {
+		let f: boolean = false
 		let { file } = elem
 		if (file.startsWith("protobuf://")) return elem
+		if(file.startsWith("http://") || file.startsWith("https://")) {
+			file = await this._videoFormWeb(file)
+			f = true
+		}
 		file = file.replace(/^file:\/{2}/, "")
 		IS_WIN && file.startsWith("/") && (file = file.slice(1))
 		const thumb = path.join(TMP_DIR, uuid())
@@ -280,6 +285,7 @@ export abstract class Contactable {
 			)
 		}
 		fs.unlink(thumb, NOOP)
+		if(f) fs.unlink(file, NOOP)
 		const buf = pb.encode({
 			1: rsp[5].toBuffer(),
 			2: md5video,
@@ -302,6 +308,14 @@ export abstract class Contactable {
 		return {
 			type: "video", file: "protobuf://" + Buffer.from(buf).toString("base64")
 		}
+	}
+
+	/** 从网络上下载一个视频以备发送 */
+	private async _videoFormWeb(file: string) {
+		const readable = (await axios.get(file, { responseType: "stream" })).data as Readable
+		const tmpfile = path.join(TMP_DIR, uuid())
+		await pipeline(readable.pipe(new DownloadTransform), fs.createWriteStream(tmpfile))
+		return tmpfile
 	}
 
 	/** 上传一个语音以备发送(理论上传一次所有群和好友都能发) */
@@ -428,7 +442,12 @@ export abstract class Contactable {
 		let preview = ""
 		let cnt = 0
 		for (const fake of msglist) {
-			const maker = new Converter(fake.message, { dm: this.dm, cachedir: this.c.config.data_dir })
+			if((fake.message as MessageElem[])?.[0]?.type === "video"){
+				if((fake.message as VideoElem[])?.length == 1){
+					fake.message = [await this._videoFormWeb((fake.message as VideoElem[])?.[0]?.file)]
+				}
+			}
+			const maker = new Converter(fake.message, { dm: this.dm, cachedir: path.join(this.c.config.data_dir,"image") })
 			makers.push(maker)
 			const seq = randomBytes(2).readInt16BE()
 			const rand = randomBytes(4).readInt32BE()
