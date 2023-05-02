@@ -91,9 +91,9 @@ export abstract class Contactable {
 				10: img.width,
 				11: img.height,
 				12: img.type,
-				13: "8.2.7.4410", //this.c.apk.version,
+				13: this.c.apk.version,
 				14: 0,
-				15: 1006,
+				15: 1052,
 				16: img.origin ? 1 : 0,
 				18: 0,
 				19: 0,
@@ -442,10 +442,10 @@ export abstract class Contactable {
 		let preview = ""
 		let cnt = 0
 		for (const fake of msglist) {
-			if((fake.message as MessageElem[])?.[0]?.type === "video"){
-				if((fake.message as VideoElem[])?.length == 1){
-					fake.message = [await this._videoFormWeb((fake.message as VideoElem[])?.[0]?.file)]
-				}
+			if(((fake.message as MessageElem[])?.[0]||fake.message as MessageElem)?.type === "video"){
+				if(Array.isArray(fake.message))
+					fake.message = fake.message[0]
+				fake.message = [await this.uploadVideo(fake.message as VideoElem)]
 			}
 			const maker = new Converter(fake.message, { dm: this.dm, cachedir: path.join(this.c.config.data_dir,"image") })
 			makers.push(maker)

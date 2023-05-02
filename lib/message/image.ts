@@ -236,7 +236,7 @@ export class Image {
 			}
 		} else {
 			proto = {
-				2: this.md5.toString("hex"),
+				2: this.md5.toString("hex") + ".gif",
 				7: this._fid,
 				8: 0,
 				9: 0,
