@@ -174,7 +174,7 @@ function loginErrorListener(this: Client, code: number, message: string) {
 	}
 	// login error
 	else if (code > 0) {
-		this.logger.error(message)
+		this.logger.error(`${message}(code: ${code})`)
 		this.em("system.login.error", { code, message })
 	}
 }
