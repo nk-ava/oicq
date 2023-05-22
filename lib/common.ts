@@ -133,6 +133,17 @@ export class DownloadTransform extends stream.Transform {
 	}
 }
 
+export class VideoDownloadTransform extends stream.Transform{
+	_size = 0
+	_transform(chunk: any, encoding: BufferEncoding, callback: stream.TransformCallback) {
+		this._size += chunk.length
+		let error = null
+		if(this._size <= MAX_UPLOAD_VIDEO_SIZE) this.push(chunk)
+		else error = new Error("video size over 200mb is refused")
+		callback(error)
+	}
+}
+
 export const PB_CONTENT = pb.encode({ 1: 1, 2: 0, 3: 0 })
 export const IS_WIN = os.platform() === "win32"
 
@@ -141,6 +152,9 @@ export const TMP_DIR = os.tmpdir()
 
 /** 最大上传和下载大小，以图片上传限制为准：30MB */
 export const MAX_UPLOAD_SIZE = 31457280
+
+/** 最大上传和下载大小，视频上传限制：200MB */
+export const MAX_UPLOAD_VIDEO_SIZE = 209715200
 
 /** 性别 */
 export type Gender = "male" | "female" | "unknown"

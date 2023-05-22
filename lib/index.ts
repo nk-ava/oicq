@@ -4,7 +4,7 @@ export { Discuss, Group } from "./group"
 export { Member } from "./member"
 export { StrangerInfo, FriendInfo, GroupInfo, MemberInfo } from "./entities"
 export { Gfs, GfsDirStat, GfsFileStat } from "./gfs"
-export { Gender, GroupRole, OnlineStatus } from "./common"
+export { Gender, GroupRole, OnlineStatus, VideoDownloadTransform } from "./common"
 export { ErrorCode, LoginErrorCode } from "./errors"
 export { Message, PrivateMessage, GroupMessage, DiscussMessage, ForwardMessage, Forwardable, Quotable,
 	MusicPlatform, Sendable, Anonymous, MessageElem, FileElem, ReplyElem,

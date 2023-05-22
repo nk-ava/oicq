@@ -89,6 +89,7 @@ export interface VideoElem {
 	 */
 	file: string
 	name?: string
+	headers?: import("http").OutgoingHttpHeaders
 	fid?: string
 	md5?: string
 	size?: number
@@ -257,9 +258,9 @@ export const segment = {
 		}
 	},
 	/** 视频(仅支持本地文件) */
-	video(file: string): VideoElem {
+	video(file: string, headers?: import("http").OutgoingHttpHeaders): VideoElem {
 		return {
-			type: "video", file
+			type: "video", file, headers
 		}
 	},
 	json(data: any): JsonElem {

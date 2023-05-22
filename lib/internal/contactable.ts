@@ -113,7 +113,7 @@ export abstract class Contactable {
 		this.c.logger.debug(`开始图片任务，共有${imgs.length}张图片`)
 		const tasks: Promise<void>[] = []
 		for (let i = 0; i < imgs.length; i++) {
-			if (imgs[i] instanceof Image === false)
+			if (!(imgs[i] instanceof Image))
 				imgs[i] = new Image(imgs[i] as ImageElem, this.dm, path.join(this.c.dir, "../image"))
 			tasks.push((imgs[i] as Image).task)
 		}
@@ -199,10 +199,10 @@ export abstract class Contactable {
 	/** 上传一个视频以备发送(理论上传一次所有群和好友都能发) */
 	async uploadVideo(elem: VideoElem): Promise<VideoElem> {
 		let f: boolean = false
-		let { file } = elem
+		let { file, headers } = elem
 		if (file.startsWith("protobuf://")) return elem
 		if(file.startsWith("http://") || file.startsWith("https://")) {
-			file = await this._videoFormWeb(file)
+			file = await this._videoFormWeb(file, headers)
 			f = true
 		}
 		file = file.replace(/^file:\/{2}/, "")
@@ -311,8 +311,8 @@ export abstract class Contactable {
 	}
 
 	/** 从网络上下载一个视频以备发送 */
-	private async _videoFormWeb(file: string) {
-		const readable = (await axios.get(file, { responseType: "stream" })).data as Readable
+	private async _videoFormWeb(file: string, headers?: import("http").OutgoingHttpHeaders) {
+		const readable = (await axios.get(file, { responseType: "stream", headers })).data as Readable
 		const tmpfile = path.join(TMP_DIR, uuid())
 		await pipeline(readable.pipe(new DownloadTransform), fs.createWriteStream(tmpfile))
 		return tmpfile
