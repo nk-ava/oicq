@@ -7,7 +7,24 @@ import { randomBytes } from "crypto"
 import { exec } from "child_process"
 import { tea, pb, ApiRejection } from "../core"
 import { ErrorCode, drop } from "../errors"
-import { escapeXml, md5, NOOP, timestamp, uuid, md5Stream, IS_WIN, TMP_DIR, gzip, unzip, int32ip2str, lock, pipeline, DownloadTransform, log } from "../common"
+import {
+	escapeXml,
+	md5,
+	NOOP,
+	timestamp,
+	uuid,
+	md5Stream,
+	IS_WIN,
+	TMP_DIR,
+	gzip,
+	unzip,
+	int32ip2str,
+	lock,
+	pipeline,
+	DownloadTransform,
+	log,
+	VideoDownloadTransform
+} from "../common"
 import { Sendable, PrivateMessage, MessageElem, ForwardMessage, Forwardable, Quotable, Image, ImageElem, VideoElem, PttElem, Converter, XmlElem, rand2uuid } from "../message"
 import { CmdID, highwayUpload } from "./highway"
 
@@ -284,10 +301,40 @@ export abstract class Contactable {
 				}
 			)
 		}
+		let fid
+		if (rsp[5].toBuffer().length) fid = rsp[5].toBuffer()
+		else {
+			const req = pb.encode({
+				1: 500,
+				5: {
+					1: this.c.uin,
+					2: this.target,
+					3: 1,
+					4: 1,
+					7: 2,
+					8: {
+						1: name,
+						2: md5video,
+						3: md5thumb,
+						4: videosize,
+						5: height,
+						6: width,
+						7: 3,
+						8: seconds,
+						9: thumbsize
+					},
+					11: this.target,
+					20: 1
+				}
+			})
+			const pay = await this.c.sendUni("PttCenterSvr.ShortVideoRetweetReq", req)
+			const p = pb.decode(pay)
+			fid = pb.decode(p[5].toBuffer())[5].toBuffer()
+		}
 		fs.unlink(thumb, NOOP)
 		if(f) fs.unlink(file, NOOP)
 		const buf = pb.encode({
-			1: rsp[5].toBuffer(),
+			1: fid,
 			2: md5video,
 			3: name,
 			4: 3,
@@ -314,7 +361,7 @@ export abstract class Contactable {
 	private async _videoFormWeb(file: string, headers?: import("http").OutgoingHttpHeaders) {
 		const readable = (await axios.get(file, { responseType: "stream", headers })).data as Readable
 		const tmpfile = path.join(TMP_DIR, uuid())
-		await pipeline(readable.pipe(new DownloadTransform), fs.createWriteStream(tmpfile))
+		await pipeline(readable.pipe(new VideoDownloadTransform), fs.createWriteStream(tmpfile))
 		return tmpfile
 	}
 
