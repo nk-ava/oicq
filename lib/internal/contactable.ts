@@ -209,6 +209,7 @@ export abstract class Contactable {
 				await this.uploadImages(converter.imgs)
 			return converter
 		} catch (e: any) {
+			console.log(e)
 			drop(ErrorCode.MessageBuilderError, e.message)
 		}
 	}
@@ -304,6 +305,9 @@ export abstract class Contactable {
 		let fid
 		if (rsp[5].toBuffer().length) fid = rsp[5].toBuffer()
 		else {
+			await new Promise(resolve => {
+				setTimeout(resolve, 1000)
+			})
 			const req = pb.encode({
 				1: 500,
 				5: {
@@ -330,6 +334,7 @@ export abstract class Contactable {
 			const pay = await this.c.sendUni("PttCenterSvr.ShortVideoRetweetReq", req)
 			const p = pb.decode(pay)
 			fid = pb.decode(p[5].toBuffer())[5].toBuffer()
+			console.log("fid:", fid)
 		}
 		fs.unlink(thumb, NOOP)
 		if(f) fs.unlink(file, NOOP)
