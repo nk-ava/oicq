@@ -271,6 +271,7 @@ export class GroupMessage extends Message {
 	sender = {
 		user_id: 0,
 		nickname: "",
+		sub_id: 1,
 		card: "",
 		/** @deprecated */
 		sex: "unknown" as Gender,
@@ -295,6 +296,7 @@ export class GroupMessage extends Message {
 		this.group_name = group[8]?.toString() || ""
 		this.block = group[2] === 127
 		this.sender.user_id = proto[1][1]
+		this.sender.sub_id = proto[1][11]
 		if (this.parsed.anon) {
 			this.sub_type = "anonymous"
 			this.anonymous = {

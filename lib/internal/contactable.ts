@@ -209,7 +209,6 @@ export abstract class Contactable {
 				await this.uploadImages(converter.imgs)
 			return converter
 		} catch (e: any) {
-			console.log(e)
 			drop(ErrorCode.MessageBuilderError, e.message)
 		}
 	}
@@ -334,7 +333,6 @@ export abstract class Contactable {
 			const pay = await this.c.sendUni("PttCenterSvr.ShortVideoRetweetReq", req)
 			const p = pb.decode(pay)
 			fid = pb.decode(p[5].toBuffer())[5].toBuffer()
-			console.log("fid:", fid)
 		}
 		fs.unlink(thumb, NOOP)
 		if(f) fs.unlink(file, NOOP)
