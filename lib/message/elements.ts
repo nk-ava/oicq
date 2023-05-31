@@ -152,6 +152,25 @@ export interface FileElem {
 	duration: number
 }
 
+/** 支持解析红包消息 */
+export interface RedPacketElem {
+	type: "redPacket"
+	sub_type: string
+	content: string
+	id: string
+	receiver?: number,
+	p1_10: string
+	p1_18: string
+	p1_21_11: string
+}
+
+/** 超级表情 */
+export interface SupfaceElem {
+	type: "supface"
+	id: number
+	text?: string
+}
+
 /** @deprecated @cqhttp 旧版引用回复(已弃用)，仅做一定程度的兼容 */
 export interface ReplyElem {
 	type: "reply"
@@ -182,7 +201,8 @@ export type ChainElem = TextElem | FaceElem | BfaceElem | MfaceElem | ImageElem 
 
 /** 注意：只有`ChainElem`中的元素可以组合发送，其他元素只能单独发送 */
 export type MessageElem = TextElem | FaceElem | BfaceElem | MfaceElem | ImageElem | AtElem | MiraiElem | ReplyElem |
-	FlashElem | PttElem | VideoElem | JsonElem | XmlElem | PokeElem | LocationElem | ShareElem | FileElem
+	FlashElem | PttElem | VideoElem | JsonElem | XmlElem | PokeElem | LocationElem | ShareElem | FileElem | RedPacketElem |
+	SupfaceElem
 
 /** 可通过sendMsg发送的类型集合 (字符串、元素对象，或它们的数组) */
 export type Sendable = string | MessageElem | (string | MessageElem)[]

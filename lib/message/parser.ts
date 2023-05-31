@@ -4,6 +4,14 @@ import * as T from "./elements"
 import { facemap, pokemap } from "./face"
 import { buildImageFileParam } from "./image"
 
+const redPackMap: {[K: number]: string} = {
+	4: "common",
+	6: "luck",
+	12: "text",
+	16: "exclusive",
+	26: "voice"
+}
+
 /** 解析消息 */
 export function parse(rich: pb.Proto | pb.Proto[], uin?: number) {
 	return new Parser(rich, uin)
@@ -47,11 +55,34 @@ export class Parser {
 		}
 	}
 
-	/** 解析: xml, json, ptt, video, flash, file, shake, poke */
+	/** 解析: xml, json, ptt, video, flash, file, shake, poke, redPacket */
 	private parseExclusiveElem(type: number, proto: pb.Proto) {
 		let elem: T.MessageElem
 		let brief: string
 		switch (type) {
+		case 24: //red packet
+			elem = {
+				type: "redPacket",
+				sub_type: redPackMap[proto[1][12]],
+				content: proto[1][3][3].toString(),
+				id: proto[1][9].toString(),
+				p1_10: proto[1][10].toString(),
+				p1_18: proto[1][18].toString(),
+				p1_21_11: proto[1][21][11].toString()
+			} as T.RedPacketElem
+			if (proto[1][20]) elem.receiver = proto[1][20]
+			brief = proto[1][5].toString()
+			this.content = `{redPacket:${elem.id}}`
+			break
+		case 37: //supface
+			elem = {
+				type: "supface",
+				id: proto[3],
+				text: proto[7].toString()
+			} as T.SupfaceElem
+			brief = elem.text || "超级表情"
+			this.content = `{supface:${elem.id}}`
+			break
 		case 12: //xml
 		case 51: //json
 			const buf = proto[1].toBuffer() as Buffer
@@ -289,6 +320,7 @@ export class Parser {
 				case 12: //xml
 				case 19: //video
 				case 51: //json
+				case 24: //red packet
 					this.parseExclusiveElem(type, proto)
 					break
 				case 53: //commonElem
@@ -298,6 +330,8 @@ export class Parser {
 						this.parsePartialElem(33, proto[2])
 					} else if (proto[1] === 2) { //poke
 						this.parseExclusiveElem(126, proto)
+					} else if (proto[1] === 37) {
+						this.parseExclusiveElem(37, proto[2])
 					}
 					break
 				default:

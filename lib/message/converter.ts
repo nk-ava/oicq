@@ -3,7 +3,7 @@ import { FACE_OLD_BUF, facemap } from "./face"
 import { Image } from "./image"
 import { AtElem, BfaceElem, Quotable, MessageElem, TextElem,
 	FaceElem, FlashElem, ImageElem, JsonElem, LocationElem, MfaceElem, ReplyElem,
-	MiraiElem, PokeElem, PttElem, Sendable, ShareElem, VideoElem, XmlElem, FileElem } from "./elements"
+	MiraiElem, PokeElem, PttElem, Sendable, ShareElem, VideoElem, XmlElem, FileElem, RedPacketElem, SupfaceElem } from "./elements"
 import { pb } from "../core"
 import { escapeXml } from "../common"
 import { Anonymous, rand2uuid, parseDmMessageId, parseGroupMessageId } from "./message"
@@ -177,6 +177,27 @@ export class Converter {
 			}
 		})
 		this._text(text)
+	}
+
+	private supface(elem: SupfaceElem){
+		let { id, text } = elem
+		id = Number(id)
+		if (id < 0 || id > 0xffff || isNaN(id))
+			throw new Error("wrong supface id: " + id)
+		text = facemap[id] || text
+		this.elems.push({
+			53: {
+				1: 37,
+				2: {
+					3: id,
+					4: 1,
+					5: 1,
+					7: text,
+					9: 1
+				}
+			}
+		})
+		this.brief += "[超级表情]"
 	}
 
 	private bface(elem: BfaceElem, magic?: Buffer) {
@@ -353,6 +374,10 @@ export class Converter {
 			}
 		})
 		this.brief += data
+	}
+
+	private redPacket(elem: RedPacketElem){
+		throw new Error("敬请期待")
 	}
 
 	private file(elem: FileElem) {
