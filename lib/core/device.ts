@@ -177,13 +177,12 @@ const apklist: { [platform in Platform]: Apk } = {
 	[Platform.Watch]: watch,
 	[Platform.iMac]: hd,
 	[Platform.iPad]: {
-		...mobile,
+		...hd,
 		subid: 537151363,
-		sign: hd.sign,
 		name: 'A8.9.33.614',
-		version: 'A8.9.33.614',
+		version: '8.9.33.614',
 		ver: '8.9.33',
-		sdkver: '6.0.0.2433',
+		ssover: 19,
 		display: 'iPad'
 	},
 }

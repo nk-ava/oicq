@@ -133,7 +133,7 @@ export class BaseClient extends EventEmitter {
 	/** 随心跳一起触发的函数，可以随意设定 */
 	protected heartbeat = NOOP
 	// 心跳定时器
-	private [HEARTBEAT]: NodeJS.Timeout
+	private [HEARTBEAT]!: NodeJS.Timeout
 	/** 数据统计 */
 	protected readonly statistics = {
 		start_time: timestamp(),
@@ -152,6 +152,7 @@ export class BaseClient extends EventEmitter {
 		super()
 		this.apk = getApkInfo(p)
 		this.device = generateFullDevice(d || uin)
+		this.sig.ksid = Buffer.from(`|${this.device.imei}|${this.apk.name}`)
 		this[NET].on("error", err => this.emit("internal.verbose", err.message, VerboseLevel.Error))
 		this[NET].on("close", () => {
 			this.statistics.remote_ip = ""
@@ -862,7 +863,6 @@ function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, type: L
 			.writeU8(0x03)
 			.read()
 	}
-	const ksid = Buffer.from(`|${this.device.imei}|` + this.apk.name)
 	let sso = new Writer()
 		.writeWithLength(new Writer()
 			.writeU32(this.sig.seq)
@@ -874,8 +874,8 @@ function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, type: L
 			.writeWithLength(this.sig.session)
 			.writeWithLength(this.device.imei)
 			.writeU32(4)
-			.writeU16(ksid.length + 2)
-			.writeBytes(ksid)
+			.writeU16(this.sig.ksid.length + 2)
+			.writeBytes(this.sig.ksid)
 			.writeWithLength(this.device.qImei16 || BUF0)
 			.read()
 		)

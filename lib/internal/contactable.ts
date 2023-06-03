@@ -234,7 +234,7 @@ export abstract class Contactable {
 				})
 			})
 		})
-		const [width, height, seconds] = await new Promise((resolve) => {
+		const [width, height, seconds]: any[] = await new Promise((resolve) => {
 			exec(`${this.c.config.ffprobe_path || "ffprobe"} -i "${file}" -show_streams`, (error, stdout, stderr) => {
 				const lines = (stdout || stderr || "").split("\n")
 				let width = 1280, height = 720, seconds = 120
