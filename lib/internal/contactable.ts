@@ -491,13 +491,54 @@ export abstract class Contactable {
 		let imgs: Image[] = []
 		let preview = ""
 		let cnt = 0
+		let MultiMsg = []
+		let brief
 		for (const fake of msglist) {
 			if(((fake.message as MessageElem[])?.[0]||fake.message as MessageElem)?.type === "video"){
 				if(Array.isArray(fake.message))
 					fake.message = fake.message[0]
 				fake.message = [await this.uploadVideo(fake.message as VideoElem)]
 			}
+			if (typeof (fake.message) == 'object' && !Array.isArray(fake.message)) {
+				if (fake.message.type == 'xml' && fake.message.data) {
+					let data = fake.message.data
+					let brief_reg = /brief\=\"(.*?)\"/gm.exec(data)
+
+					if (brief_reg && brief_reg.length > 0) {
+						brief = brief_reg[1]
+					}
+
+					let resid_reg = /m_resid\=\"(.*?)\"/gm.exec(data)
+					let fileName_reg = /m_fileName\=\"(.*?)\"/gm.exec(data)
+					if (resid_reg && resid_reg.length > 1 && fileName_reg && fileName_reg.length > 1) {
+						const buf = await this._downloadMultiMsg(String(resid_reg[1]), 2)
+						let a = pb.decode(buf)[2];
+						if (!Array.isArray(a)) {
+							a = [a]
+						}
+						for (let b of a) {
+							let m_fileName = b[1].toString();
+							if (m_fileName === 'MultiMsg') {
+								MultiMsg.push({
+									1: fileName_reg[1],
+									2: b[2]
+								});
+							} else {
+								MultiMsg.push(b)
+							}
+						}
+					}
+				} else if (fake.message.type == 'json' && fake.message.data) {
+					let json = fake.message.data
+					if (json) {
+						brief = json.prompt
+					}
+				}
+			}
 			const maker = new Converter(fake.message, { dm: this.dm, cachedir: path.join(this.c.config.data_dir,"image") })
+			if (maker?.brief && brief) {
+				maker.brief = brief
+			}
 			makers.push(maker)
 			const seq = randomBytes(2).readInt16BE()
 			const rand = randomBytes(4).readInt32BE()
@@ -532,18 +573,19 @@ export abstract class Contactable {
 				}
 			})
 		}
+		MultiMsg.push({
+			1: "MultiMsg",
+			2: {
+				1: nodes
+			}
+		})
 		for (const maker of makers)
 			imgs = [ ...imgs, ...maker.imgs ]
 		if (imgs.length)
 			await this.uploadImages(imgs)
 		const compressed = await gzip(pb.encode({
 			1: nodes,
-			2: {
-				1: "MultiMsg",
-				2: {
-					1: nodes
-				}
-			}
+			2: MultiMsg
 		}))
 		const resid = await this._uploadMultiMsg(compressed)
 		const xml = `<?xml version="1.0" encoding="utf-8"?>
