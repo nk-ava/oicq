@@ -165,8 +165,8 @@ export interface RedPacketElem {
 }
 
 /** 超级表情 */
-export interface SupfaceElem {
-	type: "supface"
+export interface LottieElem {
+	type: "lottie"
 	id: number
 	text?: string
 }
@@ -202,7 +202,7 @@ export type ChainElem = TextElem | FaceElem | BfaceElem | MfaceElem | ImageElem 
 /** 注意：只有`ChainElem`中的元素可以组合发送，其他元素只能单独发送 */
 export type MessageElem = TextElem | FaceElem | BfaceElem | MfaceElem | ImageElem | AtElem | MiraiElem | ReplyElem |
 	FlashElem | PttElem | VideoElem | JsonElem | XmlElem | PokeElem | LocationElem | ShareElem | FileElem | RedPacketElem |
-	SupfaceElem
+	LottieElem
 
 /** 可通过sendMsg发送的类型集合 (字符串、元素对象，或它们的数组) */
 export type Sendable = string | MessageElem | (string | MessageElem)[]

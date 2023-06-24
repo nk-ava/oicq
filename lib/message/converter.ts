@@ -3,7 +3,7 @@ import { FACE_OLD_BUF, facemap } from "./face"
 import { Image } from "./image"
 import { AtElem, BfaceElem, Quotable, MessageElem, TextElem,
 	FaceElem, FlashElem, ImageElem, JsonElem, LocationElem, MfaceElem, ReplyElem,
-	MiraiElem, PokeElem, PttElem, Sendable, ShareElem, VideoElem, XmlElem, FileElem, RedPacketElem, SupfaceElem } from "./elements"
+	MiraiElem, PokeElem, PttElem, Sendable, ShareElem, VideoElem, XmlElem, FileElem, RedPacketElem, LottieElem } from "./elements"
 import { pb } from "../core"
 import { escapeXml } from "../common"
 import { Anonymous, rand2uuid, parseDmMessageId, parseGroupMessageId } from "./message"
@@ -179,7 +179,7 @@ export class Converter {
 		this._text(text)
 	}
 
-	private supface(elem: SupfaceElem){
+	private lottie(elem: LottieElem){
 		let { id, text } = elem
 		id = Number(id)
 		if (id < 0 || id > 0xffff || isNaN(id))

@@ -1,21 +1,35 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as log4js from "log4js"
-import {BaseClient, Platform, pb, generateShortDevice, ShortDevice, Domain, requestQImei} from "./core"
-
-const pkg = require("../package.json")
-import {md5, timestamp, NOOP, lock, Gender, OnlineStatus, hide} from "./common"
+import {BaseClient, Domain, generateShortDevice, pb, Platform, requestQImei, ShortDevice} from "./core"
+import {Gender, hide, lock, md5, NOOP, OnlineStatus, timestamp} from "./common"
 import {
-	bindInternalListeners, parseFriendRequestFlag, parseGroupRequestFlag,
-	getSysMsg, setAvatar, setSign, setStatus, addClass, delClass, renameClass,
-	loadBL, loadFL, loadGL, loadSL, getStamp, delStamp, imageOcr, OcrResult
+	addClass,
+	bindInternalListeners,
+	delClass,
+	delStamp,
+	getStamp,
+	getSysMsg,
+	imageOcr,
+	loadBL,
+	loadFL,
+	loadGL,
+	loadSL,
+	parseFriendRequestFlag,
+	parseGroupRequestFlag,
+	renameClass,
+	setAvatar,
+	setSign,
+	setStatus
 } from "./internal"
-import {StrangerInfo, FriendInfo, GroupInfo, MemberInfo} from "./entities"
+import {FriendInfo, GroupInfo, MemberInfo, StrangerInfo} from "./entities"
 import {EventMap} from "./events"
-import {User, Friend} from "./friend"
+import {Friend, User} from "./friend"
 import {Discuss, Group} from "./group"
 import {Member} from "./member"
-import {Forwardable, Quotable, Sendable, parseDmMessageId, parseGroupMessageId, Image, ImageElem} from "./message"
+import {Forwardable, Image, ImageElem, parseDmMessageId, parseGroupMessageId, Quotable, Sendable} from "./message"
+
+const pkg = require("../package.json")
 
 /** 事件接口 */
 export interface Client extends BaseClient {
@@ -88,7 +102,7 @@ export class Client extends BaseClient {
 	readonly classes = new Map<number, string>()
 
 	/** 勿手动修改这些属性 */
-	status: OnlineStatus = 11
+	status: OnlineStatus = OnlineStatus.Online
 	nickname = ""
 	sex: Gender = "unknown"
 	age = 0

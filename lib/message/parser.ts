@@ -74,14 +74,14 @@ export class Parser {
 			brief = proto[1][5].toString()
 			this.content = `{redPacket:${elem.id}}`
 			break
-		case 37: //supface
+		case 37: //lottie
 			elem = {
-				type: "supface",
+				type: "lottie",
 				id: proto[3],
 				text: proto[7].toString()
-			} as T.SupfaceElem
+			} as T.LottieElem
 			brief = elem.text || "超级表情"
-			this.content = `{supface:${elem.id}}`
+			this.content = `{lottie:${elem.id}}`
 			break
 		case 12: //xml
 		case 51: //json
