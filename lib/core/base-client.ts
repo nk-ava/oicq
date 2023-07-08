@@ -298,7 +298,6 @@ export class BaseClient extends EventEmitter {
 			})
 			this.emit("internal.verbose", `getT544 ${cmd} result: ${JSON.stringify(data)}`, VerboseLevel.Debug);
 			if (data.code == 0) {
-				console.log(data)
 				if (typeof (data.data) === 'string') {
 					t544 = Buffer.from(data.data, 'hex');
 				} else if (typeof (data.data?.sign) === 'string') {
@@ -343,7 +342,6 @@ export class BaseClient extends EventEmitter {
 			}).catch(() => ({data: {code: -1}}));
 			this.emit("internal.verbose", `getSign ${cmd} result: ${JSON.stringify(data)}`, VerboseLevel.Debug);
 			if (data.code == 0) {
-				console.log(data)
 				const Data = data.data || {};
 				sign = this.generateSignPacket(Data.sign, Data.token, Data.extra);
 				let list = Data.ssoPacketList || Data.requestCallback || [];
