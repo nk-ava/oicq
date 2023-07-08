@@ -575,7 +575,7 @@ export class BaseClient extends EventEmitter {
 			.writeBytes(t(0x516))
 			.writeBytes(t(0x521))
 			.writeBytes(t(0x525))
-			.writeBytes(t(0x544, 2, 9, await this.getT544("810_9")))
+			.writeBytes(t(0x544, -1, 9, await this.getT544("810_9")))
 			.writeBytes(t(0x545))
 			.read()
 		this[FN_SEND_LOGIN]("wtlogin.login", body)
@@ -833,15 +833,16 @@ export class BaseClient extends EventEmitter {
 	}
 
 	/** 发送一个业务包不等待返回 */
-	writeUni(cmd: string, body: Uint8Array, seq = 0) {
+	async writeUni(cmd: string, body: Uint8Array, seq = 0) {
 		this.statistics.sent_pkt_cnt++
-		this[NET].write(buildUniPkt.call(this, cmd, body, seq))
+		if (this.signCmd.includes(cmd)) this[NET].write(await buildUniPktSign.call(this, cmd, body, seq))
+		else this[NET].write(buildUniPkt.call(this, cmd, body, seq))
 	}
 
 	/** 发送一个业务包并等待返回 */
 	async sendUni(cmd: string, body: Uint8Array, timeout = 5) {
-		if (!this[IS_ONLINE])
-			throw new ApiRejection(-1, `client not online`)
+		if (!this[IS_ONLINE]) throw new ApiRejection(-1, `client not online`)
+		if (this.signCmd.includes(cmd)) return this[FN_SEND](await buildUniPktSign.call(this, cmd, body), timeout)
 		return this[FN_SEND](buildUniPkt.call(this, cmd, body), timeout)
 	}
 }
@@ -891,7 +892,7 @@ function ssoListener(this: BaseClient, cmd: string, payload: Buffer, seq: number
 			break
 		case "QualityTest.PushList":
 		case "OnlinePush.SidTicketExpired":
-			this.writeUni(cmd, BUF0, seq)
+			this.writeUni(cmd, BUF0, seq).then()
 			break
 		case "ConfigPushSvc.PushReq": {
 			if (payload[0] === 0)
