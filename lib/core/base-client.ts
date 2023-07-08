@@ -325,13 +325,7 @@ export class BaseClient extends EventEmitter {
 		let qImei36 = this.device.qImei36 || this.device.qImei16;
 		if (qImei36 && this.apk.qua) {
 			let url = new URL(this.sig.sign_addr);
-			let post_params = {
-				qua: this.apk.qua,
-				uin: this.uin,
-				cmd: cmd,
-				seq: seq,
-				buffer: body.toString('hex')
-			};
+			let post_params = `qua=${this.apk.qua}&uin=${this.uin}&cmd=${cmd}&seq=${seq}&buffer=${body.toString('hex')}`;
 			url.pathname = '/sign';
 			const {data} = await axios.post(url.href, post_params, {
 				timeout: 10000,
