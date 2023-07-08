@@ -154,7 +154,13 @@ export class BaseClient extends EventEmitter {
 	protected signLoginCmd = [
 		'wtlogin.login',
 		'wtlogin.exchange_emp'
-	];
+	]
+	protected signCmd = [
+		'MessageSvc.PbSendMsg',
+		'trpc.o3.ecdh_access.EcdhAccess.SsoEstablishShareKey',
+		'trpc.o3.ecdh_access.EcdhAccess.SsoSecureA2Establish',
+		'trpc.o3.ecdh_access.EcdhAccess.SsoSecureA2Access'
+	]
 
 	constructor(public readonly uin: number, p: Platform = Platform.Android, d?: ShortDevice) {
 		super()
@@ -842,20 +848,23 @@ export class BaseClient extends EventEmitter {
 	}
 }
 
-function buildUniPkt(this: BaseClient, cmd: string, body: Uint8Array, seq = 0) {
+async function buildUniPktSign(this: BaseClient, cmd: string, body: Uint8Array, seq = 0) {
+	let BodySign = await this.getSign(cmd, this.sig.seq, Buffer.from(body));
+	return buildUniPkt.call(this, cmd, body, seq, BodySign);
+}
+
+function buildUniPkt(this: BaseClient, cmd: string, body: Uint8Array, seq = 0, BodySign: Buffer = BUF0) {
 	seq = seq || this[FN_NEXT_SEQ]()
 	this.emit("internal.verbose", `send:${cmd} seq:${seq}`, VerboseLevel.Debug)
 	let len = cmd.length + 20
-	const sso = Buffer.allocUnsafe(len + body.length + 4)
-	sso.writeUInt32BE(len, 0)
-	sso.writeUInt32BE(cmd.length + 4, 4)
-	sso.fill(cmd, 8)
-	let offset = cmd.length + 8
-	sso.writeUInt32BE(8, offset)
-	sso.fill(this.sig.session, offset + 4)
-	sso.writeUInt32BE(4, offset + 8)
-	sso.writeUInt32BE(body.length + 4, offset + 12)
-	sso.fill(body, offset + 16)
+	const sso = new Writer()
+		.writeWithLength(new Writer()
+			.writeWithLength(cmd)
+			.writeWithLength(this.sig.session)
+			.writeWithLength(BodySign || BUF0)
+			.read())
+		.writeWithLength(body)
+		.read();
 	const encrypted = tea.encrypt(sso, this.sig.d2key)
 	const uin = String(this.uin)
 	len = encrypted.length + uin.length + 18
