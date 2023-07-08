@@ -114,19 +114,20 @@ export type Apk = typeof mobile
 const mobile = {
 	id: "com.tencent.mobileqq",
 	app_key: '0S200MNJT807V3GE',
-	name: "A8.9.35.10440",
-	version: "8.9.35.10440",
-	ver: "8.9.35",
+	name: "A8.9.63.11390",
+	version: "8.9.63.11390",
+	ver: "8.9.63",
 	sign: Buffer.from([0xA6, 0xB7, 0x45, 0xBF, 0x24, 0xA2, 0xC2, 0x77, 0x52, 0x77, 0x16, 0xF6, 0xF3, 0x6E, 0xB6, 0x8D]),
-	buildtime: 1676531414,
+	buildtime: 1685069178,
 	appid: 16,
-	subid: 537153294,
+	subid: 537164840,
 	bitmap: 150470524,
 	main_sig_map: 16724722,
 	sub_sig_map: 0x10400,
-	sdkver: "6.0.0.2535",
+	sdkver: "6.0.0.2546",
 	display: "Android",
-	ssover: 19,
+	qua: 'V1_AND_SQ_8.9.63_4194_YYB_D',
+	ssover: 20,
 }
 
 //watch
@@ -145,6 +146,7 @@ const watch: Apk = {
 	sub_sig_map: 0x10400,
 	sdkver: "6.0.0.2365",
 	display: "Watch",
+	qua: '',
 	ssover: 5
 }
 
@@ -164,6 +166,7 @@ const hd: Apk = {
 	sub_sig_map: 66560,
 	sdkver: "6.0.0.2433",
 	display: "iMac",
+	qua: '',
 	ssover: 12
 }
 

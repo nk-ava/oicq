@@ -2,6 +2,7 @@ import {EventEmitter} from "events"
 import {createHash, randomBytes} from "crypto"
 import {Readable} from "stream"
 import Network from "./network"
+import axios from "axios"
 import Ecdh from "./ecdh"
 import Writer from "./writer"
 import * as tlv from "./tlv"
@@ -126,6 +127,8 @@ export class BaseClient extends EventEmitter {
 		/** 上次cookie刷新时间 */
 		emp_time: 0,
 		time_diff: 0,
+		requestTokenTime: 0,
+		sign_addr: ""
 	}
 	readonly pskey: { [domain: string]: Buffer } = {}
 	/** 心跳间隔(秒) */
@@ -134,6 +137,7 @@ export class BaseClient extends EventEmitter {
 	protected heartbeat = NOOP
 	// 心跳定时器
 	private [HEARTBEAT]!: NodeJS.Timeout
+	private ssoPacketList: any = [];
 	/** 数据统计 */
 	protected readonly statistics = {
 		start_time: timestamp(),
@@ -147,6 +151,10 @@ export class BaseClient extends EventEmitter {
 		remote_ip: "",
 		remote_port: 0,
 	}
+	protected signLoginCmd = [
+		'wtlogin.login',
+		'wtlogin.exchange_emp'
+	];
 
 	constructor(public readonly uin: number, p: Platform = Platform.Android, d?: ShortDevice) {
 		super()
@@ -163,7 +171,7 @@ export class BaseClient extends EventEmitter {
 			this.statistics.remote_ip = this[NET].remoteAddress as string
 			this.statistics.remote_port = this[NET].remotePort as number
 			this.emit("internal.verbose", `${this[NET].remoteAddress}:${this[NET].remotePort} connected`, VerboseLevel.Mark)
-			syncTimeDiff.call(this)
+			syncTimeDiff.call(this).then()
 		})
 		this[NET].on("packet", packetListener.bind(this))
 		this[NET].on("lost", lostListener.bind(this))
@@ -188,6 +196,14 @@ export class BaseClient extends EventEmitter {
 		} else {
 			this[NET].auto_search = true
 		}
+	}
+
+	setSignAddr(addr?: string) {
+		if (!addr) return
+		if (!addr.startsWith("http") && !addr.startsWith("https")) {
+			this.sig.sign_addr = "http://" + addr
+		}
+		this.sig.sign_addr = addr
 	}
 
 	/** 是否为在线状态 (可以收发业务包的状态) */
@@ -253,11 +269,277 @@ export class BaseClient extends EventEmitter {
 		this[FN_SEND_LOGIN]("wtlogin.exchange_emp", body)
 	}
 
+	/** T544接口 */
+	async getT544(cmd: string): Promise<Buffer> {
+		let t544 = BUF0
+		if (this.sig.sign_addr) {
+			let body = {
+				ver: this.apk.ver,
+				uin: this.uin,
+				data: cmd,
+				guid: this.device.guid.toString('hex'),
+				version: this.apk.sdkver
+			}
+			let url = new URL(this.sig.sign_addr)
+			url.pathname = "/energy"
+			const {data} = await axios.get<{ code: number, msg: string, data: any }>(url.href, {
+				params: body,
+				timeout: 10000,
+				headers: {
+					'User-Agent': `Dalvik/2.1.0 (Linux; U; Android ${this.device.version.release}; PCRT00 Build/N2G48H)`,
+					'Content-Type': "application/x-www-form-urlencoded"
+				}
+			})
+			this.emit("internal.verbose", `getT544 ${cmd} result: ${JSON.stringify(data)}`, VerboseLevel.Debug);
+			if (data.code == 0) {
+				console.log(data)
+				if (typeof (data.data) === 'string') {
+					t544 = Buffer.from(data.data, 'hex');
+				} else if (typeof (data.data?.sign) === 'string') {
+					t544 = Buffer.from(data.data.sign, 'hex');
+				}
+			} else if (data.code == 1) {
+				if (data.msg.includes('Uin is not registered.')) {
+					if (await this.apiRegister()) {
+						return await this.getT544(cmd);
+					}
+				}
+			} else {
+				this.emit("internal.verbose", `签名api(energy)异常： ${cmd} result: ${JSON.stringify(data)}`, VerboseLevel.Error);
+			}
+		}
+		return t544
+	}
+
+	/** 签名接口 */
+	async getSign(cmd: String, seq: number, body: Buffer): Promise<Buffer> {
+		let sign = BUF0;
+		if (!this.sig.sign_addr) {
+			return sign;
+		}
+		let qImei36 = this.device.qImei36 || this.device.qImei16;
+		if (qImei36 && this.apk.qua) {
+			let url = new URL(this.sig.sign_addr);
+			let post_params = {
+				qua: this.apk.qua,
+				uin: this.uin,
+				cmd: cmd,
+				seq: seq,
+				buffer: body.toString('hex')
+			};
+			url.pathname = '/sign';
+			const {data} = await axios.post(url.href, post_params, {
+				timeout: 10000,
+				headers: {
+					'User-Agent': `Dalvik/2.1.0 (Linux; U; Android ${this.device.version.release}; PCRT00 Build/N2G48H)`,
+					'Content-Type': "application/x-www-form-urlencoded"
+				}
+			}).catch(() => ({data: {code: -1}}));
+			this.emit("internal.verbose", `getSign ${cmd} result: ${JSON.stringify(data)}`, VerboseLevel.Debug);
+			if (data.code == 0) {
+				console.log(data)
+				const Data = data.data || {};
+				sign = this.generateSignPacket(Data.sign, Data.token, Data.extra);
+				let list = Data.ssoPacketList || Data.requestCallback || [];
+				if (list.length < 1 && cmd.includes('wtlogin')) {
+					this.requestToken().then();
+				} else {
+					this.ssoPacketListHandler(list).then();
+				}
+			} else if (data.code == 1) {
+				if (data.msg.includes('Uin is not registered.')) {
+					if (await this.apiRegister()) {
+						return await this.getSign(cmd, seq, body);
+					}
+				}
+			} else {
+				this.emit("internal.verbose", `签名api异常： ${cmd} result: ${JSON.stringify(data)}`, VerboseLevel.Error);
+			}
+		}
+		return sign;
+	}
+
+	/** 签名接口注册 */
+	async apiRegister() {
+		let qImei36 = this.device.qImei36 || this.device.qImei16;
+		let post_params = {
+			uin: this.uin,
+			android_id: this.device.android_id,
+			qimei36: qImei36,
+			guid: this.device.guid.toString('hex')
+		};
+		let url = new URL(this.sig.sign_addr);
+		url.pathname = '/register';
+		const {data} = await axios.get(url.href, {
+			params: post_params,
+			timeout: 15000,
+			headers: {
+				'User-Agent': `Dalvik/2.1.0 (Linux; U; Android ${this.device.version.release}; PCRT00 Build/N2G48H)`,
+				'Content-Type': "application/x-www-form-urlencoded"
+			}
+		}).catch(() => ({data: {code: -1}}));
+		this.emit("internal.verbose", `register result: ${JSON.stringify(data)}`, VerboseLevel.Debug);
+		if (data.code == 0) {
+			return true;
+		} else {
+			this.emit("internal.verbose", `签名api注册异常：result: ${JSON.stringify(data)}`, VerboseLevel.Error);
+		}
+		return false;
+	}
+
+	generateSignPacket(sign: String, token: String, extra: String) {
+		let qImei36 = this.device.qImei36 || this.device.qImei16;
+		let pb_data = {
+			9: 1,
+			12: qImei36,
+			14: 0,
+			16: this.uin,
+			18: 0,
+			19: 1,
+			20: 1,
+			21: 0,
+			24: {
+				1: Buffer.from(sign, 'hex'),
+				2: Buffer.from(token, 'hex'),
+				3: Buffer.from(extra, 'hex')
+			},
+			28: 3
+		};
+		return Buffer.from(pb.encode(pb_data));
+	}
+
+	async requestToken() {
+		if ((Date.now() - this.sig.requestTokenTime) >= (50 * 60 * 1000)) {
+			this.sig.requestTokenTime = Date.now();
+			let list = await this.requestSignToken();
+			await this.ssoPacketListHandler(list);
+		}
+	}
+
+	async requestSignToken() {
+		if (!this.sig.sign_addr) {
+			return [];
+		}
+		let qImei36 = this.device.qImei36 || this.device.qImei16;
+		let post_params = {
+			ver: this.apk.ver,
+			qua: this.apk.qua,
+			uin: this.uin,
+			androidId: this.device.android_id,
+			qimei36: qImei36,
+			guid: this.device.guid.toString('hex'),
+		};
+		let url = new URL(this.sig.sign_addr);
+		url.pathname = '/request_token';
+		const {data} = await axios.get(url.href, {
+			params: post_params,
+			timeout: 10000,
+			headers: {
+				'User-Agent': `Dalvik/2.1.0 (Linux; U; Android ${this.device.version.release}; PCRT00 Build/N2G48H)`,
+				'Content-Type': "application/x-www-form-urlencoded"
+			}
+		}).catch(() => ({data: {code: -1}}));
+		this.emit("internal.verbose", `requestSignToken result: ${JSON.stringify(data)}`, VerboseLevel.Debug);
+		if (data.code >= 0) {
+			let ssoPacketList = data.data?.ssoPacketList || data.data?.requestCallback || data.data;
+			if (!ssoPacketList || ssoPacketList.length < 1) return [];
+			return ssoPacketList;
+		}
+		return [];
+	}
+
+	async ssoPacketListHandler(list: any) {
+		if (list === null && this.isOnline()) {
+			if (this.ssoPacketList.length > 0) {
+				list = this.ssoPacketList;
+				this.ssoPacketList = [];
+			}
+		}
+		if (!list || list.length < 1) return;
+		if (!this.isOnline()) {
+			let handle = (list: any) => {
+				let new_list = [];
+				for (let val of list) {
+					try {
+						let data = pb.decode(Buffer.from(val.body, 'hex'));
+						val.type = data[1].toString();
+					} catch (err) {
+					}
+					new_list.push(val);
+				}
+				return new_list;
+			};
+			list = handle(list);
+			if (this.ssoPacketList.length > 0) {
+				for (let val of list) {
+					let ssoPacket: any = this.ssoPacketList.find((data: any) => {
+						return data.cmd === val.cmd && data.type === val.type;
+					});
+					if (ssoPacket) {
+						ssoPacket.body = val.body;
+					} else {
+						this.ssoPacketList.push(val);
+					}
+				}
+			} else {
+				this.ssoPacketList = this.ssoPacketList.concat(list);
+			}
+			return;
+		}
+
+		for (let ssoPacket of list) {
+			let cmd = ssoPacket.cmd;
+			let body = Buffer.from(ssoPacket.body, 'hex');
+			let callbackId = ssoPacket.callbackId;
+			let payload = await this.sendUni(cmd, body);
+			this.emit("internal.verbose", `sendUni ${cmd} result: ${payload.toString('hex')}`, VerboseLevel.Debug);
+			if (callbackId > -1) {
+				await this.ssoPacketListHandler(await this.submitSsoPacket(cmd, callbackId, payload));
+			}
+		}
+	}
+
+	async submitSsoPacket(cmd: string, callbackId: number, body: Buffer) {
+		if (!this.sig.sign_addr) {
+			return [];
+		}
+		let qImei36 = this.device.qImei36 || this.device.qImei16;
+		let post_params = {
+			ver: this.apk.ver,
+			qua: this.apk.qua,
+			uin: this.uin,
+			cmd: cmd,
+			callbackId: callbackId,
+			callback_id: callbackId,
+			androidId: this.device.android_id,
+			qimei36: qImei36,
+			buffer: body.toString('hex'),
+			guid: this.device.guid.toString('hex'),
+		};
+		let url = new URL(this.sig.sign_addr);
+		url.pathname = '/submit';
+		const {data} = await axios.get(url.href, {
+			params: post_params,
+			timeout: 10000,
+			headers: {
+				'User-Agent': `Dalvik/2.1.0 (Linux; U; Android ${this.device.version.release}; PCRT00 Build/N2G48H)`,
+				'Content-Type': "application/x-www-form-urlencoded"
+			}
+		}).catch(() => ({data: {code: -1}}));
+		this.emit("internal.verbose", `submitSsoPacket result: ${JSON.stringify(data)}`, VerboseLevel.Debug);
+		if (data.code >= 0) {
+			let ssoPacketList = data.data?.ssoPacketList || data.data?.requestCallback || data.data;
+			if (!ssoPacketList || ssoPacketList.length < 1) return [];
+			return ssoPacketList;
+		}
+		return [];
+	}
+
 	/**
 	 * 使用密码登录
 	 * @param md5pass 密码的md5值
 	 */
-	passwordLogin(md5pass: Buffer) {
+	async passwordLogin(md5pass: Buffer) {
 		this.sig.session = randomBytes(4)
 		this.sig.randkey = randomBytes(16)
 		this.sig.tgtgt = randomBytes(16)
@@ -289,14 +571,14 @@ export class BaseClient extends EventEmitter {
 			.writeBytes(t(0x516))
 			.writeBytes(t(0x521))
 			.writeBytes(t(0x525))
-			.writeBytes(t(0x544, 2, 9))
+			.writeBytes(t(0x544, 2, 9, await this.getT544("810_9")))
 			.writeBytes(t(0x545))
 			.read()
 		this[FN_SEND_LOGIN]("wtlogin.login", body)
 	}
 
 	/** 收到滑动验证码后，用于提交滑动验证码 */
-	submitSlider(ticket: string) {
+	async submitSlider(ticket: string) {
 		ticket = String(ticket).trim()
 		const t = tlv.getPacker(this)
 		let tlv_count = this.sig.t547.length ? 6 : 5
@@ -309,7 +591,7 @@ export class BaseClient extends EventEmitter {
 			.writeBytes(t(0x104))
 			.writeBytes(t(0x116))
 		if (this.sig.t547.length) body.writeBytes(t(0x547))
-		body.writeBytes(t(0x544, 0, 2))
+		body.writeBytes(t(0x544, -1, 2, await this.getT544("810_2")))
 		this[FN_SEND_LOGIN]("wtlogin.login", body.read())
 	}
 
@@ -330,7 +612,7 @@ export class BaseClient extends EventEmitter {
 	}
 
 	/** 提交短信验证码 */
-	submitSmsCode(code: string) {
+	async submitSmsCode(code: string) {
 		code = String(code).trim()
 		if (Buffer.byteLength(code) !== 6)
 			code = "123456"
@@ -347,13 +629,13 @@ export class BaseClient extends EventEmitter {
 			.writeBytes(t(0x17c, code))
 			.writeBytes(t(0x401))
 			.writeBytes(t(0x198))
-			.writeBytes(t(0x544, 0, 7))
+			.writeBytes(t(0x544, -1, 7, await this.getT544("810_7")))
 			.read()
 		this[FN_SEND_LOGIN]("wtlogin.login", writer)
 	}
 
 	/** 获取登录二维码(模拟手表协议扫码登录) */
-	fetchQrcode() {
+	async fetchQrcode() {
 		const t = tlv.getPacker(this)
 		const body = new Writer()
 			.writeU16(0)
@@ -369,7 +651,7 @@ export class BaseClient extends EventEmitter {
 			.writeBytes(t(0x33))
 			.writeBytes(t(0x35))
 			.read()
-		const pkt = buildCode2dPacket.call(this, 0x31, 0x11100, body)
+		const pkt = await buildCode2dPacket.call(this, 0x31, 0x11100, body)
 		this[FN_SEND](pkt).then(payload => {
 			payload = tea.decrypt(payload.slice(16, -1), this[ECDH].share_key)
 			const stream = Readable.from(payload, {objectMode: false})
@@ -472,7 +754,7 @@ export class BaseClient extends EventEmitter {
 			.writeTlv(BUF0)
 			.writeU16(0)
 			.read()
-		const pkt = buildCode2dPacket.call(this, 0x12, 0x6200, body)
+		const pkt = await buildCode2dPacket.call(this, 0x12, 0x6200, body)
 		try {
 			let payload = await this[FN_SEND](pkt)
 			payload = tea.decrypt(payload.slice(16, -1), this[ECDH].share_key)
@@ -535,7 +817,7 @@ export class BaseClient extends EventEmitter {
 	private async [FN_SEND_LOGIN](cmd: LoginCmd, body: Buffer) {
 		if (this[IS_ONLINE] || this[LOGIN_LOCK])
 			return
-		const pkt = buildLoginPacket.call(this, cmd, body)
+		const pkt = await buildLoginPacket.call(this, cmd, body)
 		try {
 			this[LOGIN_LOCK] = true
 			decodeLoginResponse.call(this, await this[FN_SEND](pkt))
@@ -727,7 +1009,7 @@ async function register(this: BaseClient, logout = false, reflush = false) {
 		0, null, 1000, 98
 	])
 	const body = jce.encodeWrapper({SvcReqRegister}, "PushService", "SvcReqRegister")
-	const pkt = buildLoginPacket.call(this, "StatSvc.register", body, 1)
+	const pkt = await buildLoginPacket.call(this, "StatSvc.register", body, 1)
 	try {
 		const payload = await this[FN_SEND](pkt, 10)
 		if (logout) return
@@ -738,7 +1020,7 @@ async function register(this: BaseClient, logout = false, reflush = false) {
 		} else {
 			this[IS_ONLINE] = true
 			this[HEARTBEAT] = setInterval(async () => {
-				syncTimeDiff.call(this)
+				syncTimeDiff.call(this).then()
 				if (typeof this.heartbeat === "function")
 					await this.heartbeat()
 				this.sendUni("OidbSvc.0x480_9_IMCore", this.sig.hb480).catch(() => {
@@ -756,8 +1038,8 @@ async function register(this: BaseClient, logout = false, reflush = false) {
 	}
 }
 
-function syncTimeDiff(this: BaseClient) {
-	const pkt = buildLoginPacket.call(this, "Client.CorrectTime", BUF4, 0)
+async function syncTimeDiff(this: BaseClient) {
+	const pkt = await buildLoginPacket.call(this, "Client.CorrectTime", BUF4, 0)
 	this[FN_SEND](pkt).then(buf => {
 		try {
 			this.sig.time_diff = buf.readInt32BE() - timestamp()
@@ -790,7 +1072,7 @@ async function refreshToken(this: BaseClient) {
 		.writeBytes(t(0x202))
 		.writeBytes(t(0x511))
 		.read()
-	const pkt = buildLoginPacket.call(this, "wtlogin.exchange_emp", body)
+	const pkt = await buildLoginPacket.call(this, "wtlogin.exchange_emp", body)
 	try {
 		let payload = await this[FN_SEND](pkt)
 		payload = tea.decrypt(payload.slice(16, payload.length - 1), this[ECDH].share_key)
@@ -827,7 +1109,7 @@ type LoginCmd =
 	| "Client.CorrectTime"
 type LoginCmdType = 0 | 1 | 2
 
-function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, type: LoginCmdType = 2): Buffer {
+async function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, type: LoginCmdType = 2): Promise<Buffer> {
 	this[FN_NEXT_SEQ]()
 	this.emit("internal.verbose", `send:${cmd} seq:${this.sig.seq}`, VerboseLevel.Debug)
 	let uin = this.uin, cmdid = 0x810, subappid = this.apk.subid
@@ -863,6 +1145,12 @@ function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, type: L
 			.writeU8(0x03)
 			.read()
 	}
+
+	let BodySign = BUF0;
+	if (this.signLoginCmd.includes(cmd)) {
+		BodySign = await this.getSign(cmd, this.sig.seq, Buffer.from(body));
+	}
+
 	let sso = new Writer()
 		.writeWithLength(new Writer()
 			.writeU32(this.sig.seq)
@@ -876,7 +1164,7 @@ function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, type: L
 			.writeU32(4)
 			.writeU16(this.sig.ksid.length + 2)
 			.writeBytes(this.sig.ksid)
-			.writeWithLength(this.device.qImei16 || BUF0)
+			.writeWithLength(BodySign)
 			.read()
 		)
 		.writeWithLength(body)
@@ -898,7 +1186,7 @@ function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, type: L
 		.read()
 }
 
-function buildCode2dPacket(this: BaseClient, cmdid: number, head: number, body: Buffer) {
+async function buildCode2dPacket(this: BaseClient, cmdid: number, head: number, body: Buffer) {
 	body = new Writer()
 		.writeU32(head)
 		.writeU32(0x1000)
@@ -917,7 +1205,7 @@ function buildCode2dPacket(this: BaseClient, cmdid: number, head: number, body: 
 		.writeBytes(body)
 		.writeU8(3)
 		.read()
-	return buildLoginPacket.call(this, "wtlogin.trans_emp", body)
+	return await buildLoginPacket.call(this, "wtlogin.trans_emp", body)
 }
 
 function calcPoW(this: BaseClient, data: any) {

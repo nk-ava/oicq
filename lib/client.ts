@@ -182,6 +182,8 @@ export class Client extends BaseClient {
 		this.logger.mark("View Changelogs：https://github.com/takayama-lily/oicq/releases")
 		this.logger.mark("----------")
 
+		if (!config.sign_api_addr) this.logger.warn("未配置签名接口，可能会出登录失败")
+		else this.setSignAddr(config.sign_api_addr)
 		this.dir = dir
 		this.config = config as Required<Config>
 		bindInternalListeners.call(this)
@@ -733,6 +735,8 @@ export interface Config {
 	/** ffmpeg */
 	ffmpeg_path?: string
 	ffprobe_path?: string
+	/** 请求签名接口 */
+	sign_api_addr?: string
 }
 
 /** 数据统计 */

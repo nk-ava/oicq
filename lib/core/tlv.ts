@@ -331,7 +331,10 @@ const map: { [tag: number]: (this: BaseClient, ...args: any[]) => Writer } = {
 		})
 		return new Writer().writeBytes(buf)
 	},
-	0x544: function (v: number, subCmd: number) {
+	0x544: function (v: number, subCmd: number, signDate: Buffer) {
+		if (v === -1) {
+			return new Writer().writeBytes(signDate)
+		}
 		const salt = new Writer()
 		if (v === 2) {
 			salt.writeU32(0)
