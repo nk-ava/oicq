@@ -23,7 +23,7 @@ const LOGIN_LOCK = Symbol("LOGIN_LOCK")
 const HEARTBEAT = Symbol("HEARTBEAT")
 
 export enum VerboseLevel {
-	Fatal, Mark, Error, Warn, Info, Debug
+	Fatal, Mark, Error, Warn, Info, Debug, Trace
 }
 
 export class ApiRejection {
@@ -649,8 +649,8 @@ export class BaseClient extends EventEmitter {
 			.writeBytes(t(0x33))
 			.writeBytes(t(0x35))
 			.read()
-		const pkt = await buildCode2dPacket.call(this, 0x31, 0x11100, body)
-		this[FN_SEND](pkt).then(payload => {
+		const {pkt, seq} = await buildCode2dPacket.call(this, 0x31, 0x11100, body)
+		this[FN_SEND](pkt, 5, "wtlogin.trans_emp", seq).then(payload => {
 			payload = tea.decrypt(payload.slice(16, -1), this[ECDH].share_key)
 			const stream = Readable.from(payload, {objectMode: false})
 			stream.read(54)
@@ -752,9 +752,9 @@ export class BaseClient extends EventEmitter {
 			.writeTlv(BUF0)
 			.writeU16(0)
 			.read()
-		const pkt = await buildCode2dPacket.call(this, 0x12, 0x6200, body)
+		const {pkt, seq} = await buildCode2dPacket.call(this, 0x12, 0x6200, body)
 		try {
-			let payload = await this[FN_SEND](pkt)
+			let payload = await this[FN_SEND](pkt, 5, "wtlogin.trans_emp", seq)
 			payload = tea.decrypt(payload.slice(16, -1), this[ECDH].share_key)
 			const stream = Readable.from(payload, {objectMode: false})
 			stream.read(48)
@@ -791,14 +791,14 @@ export class BaseClient extends EventEmitter {
 		return this.sig.seq
 	}
 
-	private [FN_SEND](pkt: Uint8Array, timeout = 5) {
+	private [FN_SEND](pkt: Uint8Array, timeout = 5, cmd: string, seq: number = 0) {
 		this.statistics.sent_pkt_cnt++
-		const seq = this.sig.seq
+		seq = seq || this.sig.seq
 		return new Promise((resolve: (payload: Buffer) => void, reject) => {
 			const id = setTimeout(() => {
 				this[HANDLERS].delete(seq)
 				this.statistics.lost_pkt_cnt++
-				reject(new ApiRejection(-2, `packet timeout (${seq})`))
+				reject(new ApiRejection(-2, `packet timeout (${seq}: ${cmd})`))
 			}, timeout * 1000)
 			this[NET].join(() => {
 				this[NET].write(pkt, () => {
@@ -815,10 +815,10 @@ export class BaseClient extends EventEmitter {
 	private async [FN_SEND_LOGIN](cmd: LoginCmd, body: Buffer) {
 		if (this[IS_ONLINE] || this[LOGIN_LOCK])
 			return
-		const pkt = await buildLoginPacket.call(this, cmd, body)
+		const {pkt, seq} = await buildLoginPacket.call(this, cmd, body)
 		try {
 			this[LOGIN_LOCK] = true
-			decodeLoginResponse.call(this, await this[FN_SEND](pkt))
+			decodeLoginResponse.call(this, await this[FN_SEND](pkt, 5, cmd, seq))
 		} catch (e: any) {
 			this[LOGIN_LOCK] = false
 			this.emit("internal.error.network", -2, "server is busy")
@@ -829,20 +829,25 @@ export class BaseClient extends EventEmitter {
 	/** 发送一个业务包不等待返回 */
 	async writeUni(cmd: string, body: Uint8Array, seq = 0) {
 		this.statistics.sent_pkt_cnt++
-		if (this.signCmd.includes(cmd)) this[NET].write(await buildUniPktSign.call(this, cmd, body, seq))
-		else this[NET].write(buildUniPkt.call(this, cmd, body, seq))
+		if (this.signCmd.includes(cmd)) this[NET].write((await buildUniPktSign.call(this, cmd, body, seq)).pkt)
+		else this[NET].write(buildUniPkt.call(this, cmd, body, seq).pkt)
 	}
 
 	/** 发送一个业务包并等待返回 */
 	async sendUni(cmd: string, body: Uint8Array, timeout = 5) {
 		if (!this[IS_ONLINE]) throw new ApiRejection(-1, `client not online`)
-		if (this.signCmd.includes(cmd)) return this[FN_SEND](await buildUniPktSign.call(this, cmd, body), timeout)
-		return this[FN_SEND](buildUniPkt.call(this, cmd, body), timeout)
+		const {
+			pkt,
+			seq
+		} = this.signCmd.includes(cmd) ? await buildUniPktSign.call(this, cmd, body) : buildUniPkt.call(this, cmd, body);
+		if (this.signCmd.includes(cmd)) return this[FN_SEND](pkt, timeout, cmd, seq)
+		return this[FN_SEND](pkt, timeout, cmd, seq)
 	}
 }
 
 async function buildUniPktSign(this: BaseClient, cmd: string, body: Uint8Array, seq = 0) {
-	let BodySign = await this.getSign(cmd, this.sig.seq, Buffer.from(body));
+	seq = seq || this[FN_NEXT_SEQ]()
+	let BodySign = await this.getSign(cmd, seq, Buffer.from(body));
 	return buildUniPkt.call(this, cmd, body, seq, BodySign);
 }
 
@@ -870,7 +875,7 @@ function buildUniPkt(this: BaseClient, cmd: string, body: Uint8Array, seq = 0, B
 	pkt.writeUInt32BE(uin.length + 4, 14)
 	pkt.fill(uin, 18)
 	pkt.fill(encrypted, uin.length + 18)
-	return pkt
+	return {pkt, seq}
 }
 
 const EVENT_KICKOFF = Symbol("EVENT_KICKOFF")
@@ -980,10 +985,13 @@ async function packetListener(this: BaseClient, pkt: Buffer) {
 		}
 		const sso = await parseSso.call(this, decrypted)
 		this.emit("internal.verbose", `recv:${sso.cmd} seq:${sso.seq}`, VerboseLevel.Debug)
-		if (this[HANDLERS].has(sso.seq))
+		if (this[HANDLERS].has(sso.seq)) {
+			this.emit("internal.verbose", `调用${sso.cmd}:${sso.seq}回调函数`, VerboseLevel.Trace)
 			this[HANDLERS].get(sso.seq)?.(sso.payload)
-		else
+		} else {
+			this.emit("internal.verbose", `${sso.cmd}:${sso.seq}没有回调函数`, VerboseLevel.Trace)
 			this.emit("internal.sso", sso.cmd, sso.payload, sso.seq)
+		}
 	} catch (e) {
 		this.emit("internal.verbose", e, VerboseLevel.Error)
 	}
@@ -1011,9 +1019,9 @@ async function register(this: BaseClient, logout = false, reflush = false) {
 		0, null, 1000, 98
 	])
 	const body = jce.encodeWrapper({SvcReqRegister}, "PushService", "SvcReqRegister")
-	const pkt = await buildLoginPacket.call(this, "StatSvc.register", body, 1)
+	const {pkt, seq} = await buildLoginPacket.call(this, "StatSvc.register", body, 1)
 	try {
-		const payload = await this[FN_SEND](pkt, 10)
+		const payload = await this[FN_SEND](pkt, 10, "StatSvc.register", seq)
 		if (logout) return
 		const rsp = jce.decodeWrapper(payload)
 		const result = rsp[9] ? true : false
@@ -1024,7 +1032,7 @@ async function register(this: BaseClient, logout = false, reflush = false) {
 			this[HEARTBEAT] = setInterval(async () => {
 				syncTimeDiff.call(this).then()
 				if (typeof this.heartbeat === "function")
-					await this.heartbeat()
+					this.heartbeat()
 				this.sendUni("OidbSvc.0x480_9_IMCore", this.sig.hb480).catch(() => {
 					this.emit("internal.verbose", "heartbeat timeout", VerboseLevel.Warn)
 					this.sendUni("OidbSvc.0x480_9_IMCore", this.sig.hb480).catch(() => {
@@ -1041,8 +1049,8 @@ async function register(this: BaseClient, logout = false, reflush = false) {
 }
 
 async function syncTimeDiff(this: BaseClient) {
-	const pkt = await buildLoginPacket.call(this, "Client.CorrectTime", BUF4, 0)
-	this[FN_SEND](pkt).then(buf => {
+	const {pkt, seq} = await buildLoginPacket.call(this, "Client.CorrectTime", BUF4, 0)
+	this[FN_SEND](pkt, 5, "Client.CorrectTime", seq).then(buf => {
 		try {
 			this.sig.time_diff = buf.readInt32BE() - timestamp()
 		} catch {
@@ -1074,9 +1082,9 @@ async function refreshToken(this: BaseClient) {
 		.writeBytes(t(0x202))
 		.writeBytes(t(0x511))
 		.read()
-	const pkt = await buildLoginPacket.call(this, "wtlogin.exchange_emp", body)
+	const {pkt, seq} = await buildLoginPacket.call(this, "wtlogin.exchange_emp", body)
 	try {
-		let payload = await this[FN_SEND](pkt)
+		let payload = await this[FN_SEND](pkt, 5, "wtlogin.exchange_emp", seq)
 		payload = tea.decrypt(payload.slice(16, payload.length - 1), this[ECDH].share_key)
 		const stream = Readable.from(payload, {objectMode: false})
 		stream.read(2)
@@ -1111,9 +1119,9 @@ type LoginCmd =
 	| "Client.CorrectTime"
 type LoginCmdType = 0 | 1 | 2
 
-async function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, type: LoginCmdType = 2): Promise<Buffer> {
-	this[FN_NEXT_SEQ]()
-	this.emit("internal.verbose", `send:${cmd} seq:${this.sig.seq}`, VerboseLevel.Debug)
+async function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, type: LoginCmdType = 2): Promise<{ pkt: Buffer, seq: number }> {
+	const seq = this[FN_NEXT_SEQ]()
+	this.emit("internal.verbose", `send:${cmd} seq:${seq}`, VerboseLevel.Debug)
 	let uin = this.uin, cmdid = 0x810, subappid = this.apk.subid
 	if (cmd === "wtlogin.trans_emp") {
 		uin = 0
@@ -1150,12 +1158,12 @@ async function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, t
 
 	let BodySign = BUF0;
 	if (this.signLoginCmd.includes(cmd)) {
-		BodySign = await this.getSign(cmd, this.sig.seq, Buffer.from(body));
+		BodySign = await this.getSign(cmd, seq, Buffer.from(body));
 	}
 
 	let sso = new Writer()
 		.writeWithLength(new Writer()
-			.writeU32(this.sig.seq)
+			.writeU32(seq)
 			.writeU32(subappid)
 			.writeU32(subappid)
 			.writeBytes(Buffer.from([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00]))
@@ -1175,17 +1183,18 @@ async function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, t
 		sso = tea.encrypt(sso, this.sig.d2key)
 	else if (type === 2)
 		sso = tea.encrypt(sso, BUF16)
-	return new Writer()
-		.writeWithLength(new Writer()
-			.writeU32(0x0A)
-			.writeU8(type)
-			.writeWithLength(this.sig.d2)
-			.writeU8(0)
-			.writeWithLength(String(uin))
-			.writeBytes(sso)
-			.read()
-		)
-		.read()
+	return {
+		pkt: new Writer()
+			.writeWithLength(new Writer()
+				.writeU32(0x0A)
+				.writeU8(type)
+				.writeWithLength(this.sig.d2)
+				.writeU8(0)
+				.writeWithLength(String(uin))
+				.writeBytes(sso)
+				.read()
+			).read(), seq: seq
+	}
 }
 
 async function buildCode2dPacket(this: BaseClient, cmdid: number, head: number, body: Buffer) {

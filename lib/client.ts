@@ -188,7 +188,7 @@ export class Client extends BaseClient {
 		this.config = config as Required<Config>
 		bindInternalListeners.call(this)
 		this.on("internal.verbose", (verbose, level) => {
-			const list: Exclude<LogLevel, "off">[] = ["fatal", "mark", "error", "warn", "info", "trace"]
+			const list: Exclude<LogLevel, "off">[] = ["fatal", "mark", "error", "warn", "info", "debug", "trace"]
 			this.logger[list[level]](verbose)
 		})
 		lock(this, "dir")
@@ -209,12 +209,12 @@ export class Client extends BaseClient {
 		hide(this, "_sync_cookie")
 
 		let n = 0
-		this.heartbeat = () => {
+		this.heartbeat = async () => {
 			this._calcMsgCntPerMin()
 			n++
 			if (n > 10) {
 				n = 0
-				this.setOnlineStatus()
+				await this.setOnlineStatus()
 			}
 		}
 
@@ -263,8 +263,8 @@ export class Client extends BaseClient {
 	}
 
 	/** 设置在线状态 */
-	setOnlineStatus(status = this.status || OnlineStatus.Online) {
-		return setStatus.call(this, status)
+	async setOnlineStatus(status = this.status || OnlineStatus.Online) {
+		return await setStatus.call(this, status)
 	}
 
 	/** 设置昵称 */
