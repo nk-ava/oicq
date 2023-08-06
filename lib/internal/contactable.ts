@@ -2,11 +2,11 @@ import fs from "fs"
 import path from "path"
 import querystring from "querystring"
 import axios from "axios"
-import { Readable } from "stream"
-import { randomBytes } from "crypto"
-import { exec } from "child_process"
-import { tea, pb, ApiRejection } from "../core"
-import { ErrorCode, drop } from "../errors"
+import {Readable} from "stream"
+import {randomBytes} from "crypto"
+import {exec} from "child_process"
+import {tea, pb, ApiRejection} from "../core"
+import {ErrorCode, drop} from "../errors"
 import {
 	escapeXml,
 	md5,
@@ -23,10 +23,24 @@ import {
 	pipeline,
 	DownloadTransform,
 	log,
-	VideoDownloadTransform
+	VideoDownloadTransform, BUF0
 } from "../common"
-import { Sendable, PrivateMessage, MessageElem, ForwardMessage, Forwardable, Quotable, Image, ImageElem, VideoElem, PttElem, Converter, XmlElem, rand2uuid } from "../message"
-import { CmdID, highwayUpload } from "./highway"
+import {
+	Sendable,
+	PrivateMessage,
+	MessageElem,
+	ForwardMessage,
+	Forwardable,
+	Quotable,
+	Image,
+	ImageElem,
+	VideoElem,
+	PttElem,
+	Converter,
+	XmlElem,
+	rand2uuid
+} from "../message"
+import {CmdID, highwayUpload} from "./highway"
 
 type Client = import("../client").Client
 
@@ -137,7 +151,7 @@ export abstract class Contactable {
 		const res1 = await Promise.allSettled(tasks) as PromiseRejectedResult[]
 		for (let i = 0; i < res1.length; i++) {
 			if (res1[i].status === "rejected")
-				this.c.logger.warn(`图片${i+1}失败, reason: ` + res1[i].reason?.message)
+				this.c.logger.warn(`图片${i + 1}失败, reason: ` + res1[i].reason?.message)
 		}
 		let n = 0
 		while (imgs.length > n) {
@@ -146,13 +160,13 @@ export abstract class Contactable {
 			const tasks: Promise<any>[] = []
 			for (let i = n; i < imgs.length; ++i) {
 				if (i >= n + 20) break
-				tasks.push(this._uploadImage(imgs[i] as Image, rsp[i%20]))
+				tasks.push(this._uploadImage(imgs[i] as Image, rsp[i % 20]))
 			}
 			const res2 = await Promise.allSettled(tasks) as PromiseRejectedResult[]
 			for (let i = 0; i < res2.length; i++) {
 				if (res2[i].status === "rejected") {
-					res1[n+i] = res2[i]
-					this.c.logger.warn(`图片${n+i+1}上传失败, reason: ` + res2[i].reason?.message)
+					res1[n + i] = res2[i]
+					this.c.logger.warn(`图片${n + i + 1}上传失败, reason: ` + res2[i].reason?.message)
 				}
 			}
 			n += 20
@@ -163,10 +177,10 @@ export abstract class Contactable {
 
 	private async _uploadImage(img: Image, rsp: pb.Proto) {
 		const j = this.dm ? 1 : 0
-		if (rsp[2+j] !== 0)
-			throw new Error(String(rsp[3+j]))
-		img.fid = rsp[9+j].toBuffer?.() || rsp[9+j]
-		if (rsp[4+j]) {
+		if (rsp[2 + j] !== 0)
+			throw new Error(String(rsp[3 + j]))
+		img.fid = rsp[9 + j].toBuffer?.() || rsp[9 + j]
+		if (rsp[4 + j]) {
 			img.deleteTmpFile()
 			return
 		}
@@ -174,8 +188,8 @@ export abstract class Contactable {
 			img.deleteCacheFile()
 			return
 		}
-		const ip = rsp[6+j]?.[0] || rsp[6+j]
-		const port = rsp[7+j]?.[0] || rsp[7+j]
+		const ip = rsp[6 + j]?.[0] || rsp[6 + j]
+		const port = rsp[7 + j]?.[0] || rsp[7 + j]
 		return await highwayUpload.call(
 			this.c,
 			img.readable,
@@ -183,7 +197,7 @@ export abstract class Contactable {
 				cmdid: j ? CmdID.DmImage : CmdID.GroupImage,
 				md5: img.md5,
 				size: img.size,
-				ticket: rsp[8+j].toBuffer()
+				ticket: rsp[8 + j].toBuffer()
 			},
 			ip, port
 		).finally(img.deleteTmpFile.bind(img))
@@ -216,9 +230,9 @@ export abstract class Contactable {
 	/** 上传一个视频以备发送(理论上传一次所有群和好友都能发) */
 	async uploadVideo(elem: VideoElem): Promise<VideoElem> {
 		let f: boolean = false
-		let { file, headers } = elem
+		let {file, headers} = elem
 		if (file.startsWith("protobuf://")) return elem
-		if(file.startsWith("http://") || file.startsWith("https://")) {
+		if (file.startsWith("http://") || file.startsWith("https://")) {
 			file = await this._videoFormWeb(file, headers)
 			f = true
 		}
@@ -307,35 +321,25 @@ export abstract class Contactable {
 			await new Promise(resolve => {
 				setTimeout(resolve, 1000)
 			})
-			const req = pb.encode({
-				1: 500,
-				5: {
-					1: this.c.uin,
-					2: this.target,
-					3: 1,
-					4: 1,
-					7: 2,
-					8: {
-						1: name,
-						2: md5video,
-						3: md5thumb,
-						4: videosize,
-						5: height,
-						6: width,
-						7: 3,
-						8: seconds,
-						9: thumbsize
-					},
-					11: this.target,
-					20: 1
-				}
+			fid = await new Promise(resolve => {
+				const timer = setTimeout(() => {
+					clearInterval(interval)
+					resolve(BUF0)
+				}, 6500)
+				const interval = setInterval(async () => {
+					const pay = await this.c.sendUni("PttCenterSvr.GroupShortVideoUpReq", body)
+					const p = pb.decode(pay)[3]
+					const fd = p[5].toBuffer()
+					if (fd.length) {
+						clearTimeout(timer)
+						clearInterval(interval)
+						resolve(fd)
+					}
+				}, 2000)
 			})
-			const pay = await this.c.sendUni("PttCenterSvr.ShortVideoRetweetReq", req)
-			const p = pb.decode(pay)
-			fid = pb.decode(p[5].toBuffer())[5].toBuffer()
 		}
 		fs.unlink(thumb, NOOP)
-		if(f) fs.unlink(file, NOOP)
+		if (f) fs.unlink(file, NOOP)
 		const buf = pb.encode({
 			1: fid,
 			2: md5video,
@@ -362,7 +366,7 @@ export abstract class Contactable {
 
 	/** 从网络上下载一个视频以备发送 */
 	private async _videoFormWeb(file: string, headers?: import("http").OutgoingHttpHeaders) {
-		const readable = (await axios.get(file, { responseType: "stream", headers })).data as Readable
+		const readable = (await axios.get(file, {responseType: "stream", headers})).data as Readable
 		const tmpfile = path.join(TMP_DIR, uuid())
 		await pipeline(readable.pipe(new VideoDownloadTransform), fs.createWriteStream(tmpfile))
 		return tmpfile
@@ -415,7 +419,7 @@ export abstract class Contactable {
 			"User-Agent": `QQ/${this.c.apk.version} CFNetwork/1126`,
 			"Net-Type": "Wifi"
 		}
-		await axios.post(url, buf, { headers })
+		await axios.post(url, buf, {headers})
 		this.c.logger.debug("语音任务结束")
 
 		const fid = rsp[11].toBuffer()
@@ -468,7 +472,7 @@ export abstract class Contactable {
 			}],
 		})
 		const ip = rsp[4]?.[0] || rsp[4], port = rsp[5]?.[0] || rsp[5]
-		await highwayUpload.call(this.c, Readable.from(Buffer.from(buf), { objectMode: false }), {
+		await highwayUpload.call(this.c, Readable.from(Buffer.from(buf), {objectMode: false}), {
 			cmdid: CmdID.MultiMsg,
 			md5: md5(buf),
 			size: buf.length,
@@ -494,8 +498,8 @@ export abstract class Contactable {
 		let MultiMsg = []
 		let brief
 		for (const fake of msglist) {
-			if(((fake.message as MessageElem[])?.[0]||fake.message as MessageElem)?.type === "video"){
-				if(Array.isArray(fake.message))
+			if (((fake.message as MessageElem[])?.[0] || fake.message as MessageElem)?.type === "video") {
+				if (Array.isArray(fake.message))
 					fake.message = fake.message[0]
 				fake.message = [await this.uploadVideo(fake.message as VideoElem)]
 			}
@@ -535,7 +539,10 @@ export abstract class Contactable {
 					}
 				}
 			}
-			const maker = new Converter(fake.message, { dm: this.dm, cachedir: path.join(this.c.config.data_dir,"image") })
+			const maker = new Converter(fake.message, {
+				dm: this.dm,
+				cachedir: path.join(this.c.config.data_dir, "image")
+			})
 			if (maker?.brief && brief) {
 				maker.brief = brief
 			}
@@ -580,7 +587,7 @@ export abstract class Contactable {
 			}
 		})
 		for (const maker of makers)
-			imgs = [ ...imgs, ...maker.imgs ]
+			imgs = [...imgs, ...maker.imgs]
 		if (imgs.length)
 			await this.uploadImages(imgs)
 		const compressed = await gzip(pb.encode({
@@ -616,7 +623,8 @@ export abstract class Contactable {
 		for (let proto of a) {
 			try {
 				ret.push(new ForwardMessage(proto))
-			} catch { }
+			} catch {
+			}
 		}
 		return ret
 	}
@@ -641,12 +649,14 @@ export abstract class Contactable {
 		const port = rsp[5]?.[0] || rsp[5]
 		let url = port == 443 ? "https://ssl.htdata.qq.com" : `http://${ip}:${port}`
 		url += rsp[2]
-		let { data, headers } = await axios.get(url, { headers: {
-			"User-Agent": `QQ/${this.c.apk.version} CFNetwork/1126`,
-			"Net-Type": "Wifi"
-		}, responseType: "arraybuffer"})
+		let {data, headers} = await axios.get(url, {
+			headers: {
+				"User-Agent": `QQ/${this.c.apk.version} CFNetwork/1126`,
+				"Net-Type": "Wifi"
+			}, responseType: "arraybuffer"
+		})
 		data = Buffer.from(data as ArrayBuffer)
-		let buf = headers["accept-encoding"]?.includes("gzip") ?  await unzip(data as Buffer) : data as Buffer
+		let buf = headers["accept-encoding"]?.includes("gzip") ? await unzip(data as Buffer) : data as Buffer
 		const head_len = buf.readUInt32BE(1)
 		const body_len = buf.readUInt32BE(5)
 		buf = tea.decrypt(buf.slice(head_len + 9, head_len + 9 + body_len), rsp[3].toBuffer())
@@ -684,8 +694,8 @@ export abstract class Contactable {
 function createReadable(file1: string, file2: string) {
 	return Readable.from(
 		concatStreams(
-			fs.createReadStream(file1, { highWaterMark: 256 * 1024 }),
-			fs.createReadStream(file2, { highWaterMark: 256 * 1024 })
+			fs.createReadStream(file1, {highWaterMark: 256 * 1024}),
+			fs.createReadStream(file2, {highWaterMark: 256 * 1024})
 		)
 	)
 }
@@ -712,7 +722,7 @@ async function getPttBuffer(file: string | Buffer, ffmpeg = "ffmpeg"): Promise<B
 		}
 	} else if (file.startsWith("http://") || file.startsWith("https://")) {
 		// 网络文件
-		const readable = (await axios.get(file, { responseType: "stream" })).data as Readable
+		const readable = (await axios.get(file, {responseType: "stream"})).data as Readable
 		const tmpfile = path.join(TMP_DIR, uuid())
 		await pipeline(readable.pipe(new DownloadTransform), fs.createWriteStream(tmpfile))
 		const head = await read7Bytes(tmpfile)
