@@ -49,7 +49,7 @@ export class Discuss extends Contactable {
 	async sendMsg(content: Sendable): Promise<MessageRet> {
 		const { rich, brief } = await this._preprocess(content)
 		const body = pb.encode({
-			1: { 4: { 1: this.gid } },
+			1: { 2: { 1: this.gid } },
 			2: PB_CONTENT,
 			3: { 1: rich },
 			4: randomBytes(2).readUInt16BE(),
