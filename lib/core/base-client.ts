@@ -11,6 +11,7 @@ import * as pb from "./protobuf"
 import * as jce from "./jce"
 import {BUF0, BUF4, BUF16, NOOP, md5, timestamp, lock, hide, unzip, int32ip2str} from "./constants"
 import {ShortDevice, Device, generateFullDevice, Platform, Apk, getApkInfo} from "./device"
+import {Version} from "../client";
 
 const FN_NEXT_SEQ = Symbol("FN_NEXT_SEQ")
 const FN_SEND = Symbol("FN_SEND")
@@ -31,6 +32,13 @@ export class ApiRejection {
 		this.code = Number(this.code)
 		this.message = this.message?.toString() || "unknown"
 	}
+}
+
+type Packet = {
+	cmd: string
+	type: number
+	callbackId?: number
+	body: Buffer
 }
 
 export enum QrcodeResult {
@@ -104,7 +112,9 @@ export class BaseClient extends EventEmitter {
 		d2key: BUF0,
 		t104: BUF0,
 		t174: BUF0,
+		t546: BUF0,
 		t547: BUF0,
+		t553: BUF0,
 		qrsig: BUF0,
 		/** 大数据上传通道 */
 		bigdata: {
@@ -137,7 +147,7 @@ export class BaseClient extends EventEmitter {
 	protected heartbeat = NOOP
 	// 心跳定时器
 	private [HEARTBEAT]!: NodeJS.Timeout
-	private ssoPacketList: any = [];
+	private ssoPacketList: Packet[] = [];
 	/** 数据统计 */
 	protected readonly statistics = {
 		start_time: timestamp(),
@@ -151,20 +161,18 @@ export class BaseClient extends EventEmitter {
 		remote_ip: "",
 		remote_port: 0,
 	}
-	protected signLoginCmd = [
-		'wtlogin.login',
-		'wtlogin.exchange_emp'
-	]
 	protected signCmd = [
+		'wtlogin.login',
+		'wtlogin.exchange_emp',
 		'MessageSvc.PbSendMsg',
 		'trpc.o3.ecdh_access.EcdhAccess.SsoEstablishShareKey',
 		'trpc.o3.ecdh_access.EcdhAccess.SsoSecureA2Establish',
 		'trpc.o3.ecdh_access.EcdhAccess.SsoSecureA2Access'
-	]
+	];
 
-	constructor(public readonly uin: number, p: Platform = Platform.Android, d?: ShortDevice) {
+	constructor(public readonly uin: number, p: Platform = Platform.Android, v: Version = "8.9.63", d?: ShortDevice) {
 		super()
-		this.apk = getApkInfo(p)
+		this.apk = getApkInfo(p, v)
 		this.device = generateFullDevice(d || uin)
 		this.sig.ksid = Buffer.from(`|${this.device.imei}|${this.apk.name}`)
 		this[NET].on("error", err => this.emit("internal.verbose", err.message, VerboseLevel.Error))
@@ -233,250 +241,312 @@ export class BaseClient extends EventEmitter {
 	}
 
 	/** 使用接收到的token登录 */
-	tokenLogin(token: Buffer) {
-		if (![144, 152, 160].includes(token.length))
+	async tokenLogin(token: Buffer = BUF0) {
+		if (![144, 152, 160, 0].includes(token.length))
 			throw new Error("bad token")
-		this.sig.session = randomBytes(4)
-		this.sig.randkey = randomBytes(16)
-		this[ECDH] = new Ecdh
-		this.sig.d2key = token.slice(0, 16)
-		if (token.length === 160) {
-			this.sig.d2 = token.slice(16, token.length - 80)
-			this.sig.tgt = token.slice(token.length - 80)
-		} else {
-			this.sig.d2 = token.slice(16, token.length - 72)
-			this.sig.tgt = token.slice(token.length - 72)
+		if (token.length) {
+			this.sig.session = randomBytes(4)
+			this.sig.randkey = randomBytes(16)
+			this[ECDH] = new Ecdh
+			this.sig.d2key = token.slice(0, 16)
+			if (token.length === 160) {
+				this.sig.d2 = token.slice(16, token.length - 80)
+				this.sig.tgt = token.slice(token.length - 80)
+			} else {
+				this.sig.d2 = token.slice(16, token.length - 72)
+				this.sig.tgt = token.slice(token.length - 72)
+			}
+			this.sig.tgtgt = md5(this.sig.d2key)
 		}
-		this.sig.tgtgt = md5(this.sig.d2key)
-		const t = tlv.getPacker(this)
-		let tlv_count = 18
-		const writer = new Writer()
+		const t = tlv.getPacker(this);
+		const tlvs = [
+			t(0x8),
+			t(0x18),
+			t(0x100),
+			t(0x108),
+			t(0x10a),
+			t(0x112),
+			t(0x116),
+			t(0x141),
+			t(0x142),
+			t(0x143),
+			t(0x144),
+			t(0x145),
+			t(0x147),
+			t(0x154),
+			t(0x177),
+			t(0x187),
+			t(0x188),
+			t(0x511)
+		];
+		if (this.apk.ssover >= 5) {
+			tlvs.push(t(0x544, -1, await this.getT544("810_a")));
+			if (this.sig.t553) tlvs.push(t(0x553));
+		}
+		if (this.device.qImei16) tlvs.push(t(0x545, this.device.qImei16))
+		else {
+			tlvs.push(t(0x194));
+			tlvs.push(t(0x202));
+		}
+		let writer = new Writer()
 			.writeU16(11)
-			.writeU16(tlv_count)
-			.writeBytes(t(0x100))
-			.writeBytes(t(0x10a))
-			.writeBytes(t(0x116))
-			.writeBytes(t(0x108))
-			.writeBytes(t(0x144))
-			.writeBytes(t(0x143))
-			.writeBytes(t(0x142))
-			.writeBytes(t(0x154))
-			.writeBytes(t(0x18))
-			.writeBytes(t(0x141))
-			.writeBytes(t(0x8))
-			.writeBytes(t(0x147))
-			.writeBytes(t(0x177))
-			.writeBytes(t(0x187))
-			.writeBytes(t(0x188))
-			.writeBytes(t(0x194))
-			.writeBytes(t(0x511))
-			.writeBytes(t(0x202))
-		const body = writer.read()
-		this[FN_SEND_LOGIN]("wtlogin.exchange_emp", body)
+			.writeU16(tlvs.length);
+		for (let tlv of tlvs) writer.writeBytes(tlv);
+		const body = writer.read();
+		if (token != BUF0) {
+			this[FN_SEND_LOGIN]("wtlogin.exchange_emp", body);
+			return BUF0;
+		}
+		return body;
 	}
 
 	/** T544接口 */
 	async getT544(cmd: string): Promise<Buffer> {
-		let t544 = BUF0
-		if (this.sig.sign_addr) {
-			let body = {
+		let sign = BUF0;
+		if (this.sig.sign_addr && this.apk.qua) {
+			const time = Date.now();
+			let qImei36 = this.device.qImei36 || this.device.qImei16;
+			let post_params = {
 				ver: this.apk.ver,
-				uin: this.uin,
+				uin: this.uin || 0,
 				data: cmd,
+				android_id: this.device.android_id,
+				qimei36: qImei36 || this.device.android_id,
 				guid: this.device.guid.toString('hex'),
 				version: this.apk.sdkver
+			};
+			let url = new URL(this.sig.sign_addr);
+			let path = url.pathname;
+			if (path.substring(path.length - 1) === '/') {
+				path += 'energy';
+			} else {
+				path = path.replace(/\/sign$/, '/energy');
 			}
-			let url = new URL(this.sig.sign_addr)
-			url.pathname = "/energy"
-			const {data} = await axios.get<{ code: number, msg: string, data: any }>(url.href, {
-				params: body,
-				timeout: 10000,
-				headers: {
-					'User-Agent': `Dalvik/2.1.0 (Linux; U; Android ${this.device.version.release}; PCRT00 Build/N2G48H)`,
-					'Content-Type': "application/x-www-form-urlencoded"
-				}
-			})
-			this.emit("internal.verbose", `getT544 ${cmd} result: ${JSON.stringify(data)}`, VerboseLevel.Debug);
-			if (data.code == 0) {
+			url.pathname = path;
+			const data = await get.bind(this)(url.href, post_params);
+			this.emit("internal.verbose", `getT544 ${cmd} result(${Date.now() - time}ms): ${JSON.stringify(data)}`, VerboseLevel.Debug);
+			if (data.code === 0) {
 				if (typeof (data.data) === 'string') {
-					t544 = Buffer.from(data.data, 'hex');
+					sign = Buffer.from(data.data, 'hex');
 				} else if (typeof (data.data?.sign) === 'string') {
-					t544 = Buffer.from(data.data.sign, 'hex');
-				}
-			} else if (data.code == 1) {
-				if (data.msg.includes('Uin is not registered.')) {
-					if (await this.apiRegister()) {
-						return await this.getT544(cmd);
-					}
+					sign = Buffer.from(data.data.sign, 'hex');
 				}
 			} else {
-				this.emit("internal.verbose", `签名api(energy)异常： ${cmd} result: ${JSON.stringify(data)}`, VerboseLevel.Error);
+				if (data.code === 1) {
+					if (data.msg.includes('Uin is not registered.')) {
+						if (await this.apiRegister.call(this)) {
+							return await this.getT544(cmd);
+						}
+					}
+				}
+				this.emit("internal.verbose", `签名api(energy)异常： ${cmd} result(${Date.now() - time}ms): ${JSON.stringify(data)}`, VerboseLevel.Error);
 			}
 		}
-		return t544
+		return sign;
 	}
 
 	/** 签名接口 */
-	async getSign(cmd: String, seq: number, body: Buffer): Promise<Buffer> {
-		let sign = BUF0;
+	async getSign(cmd: string, seq: number, body: Buffer): Promise<Buffer> {
+		let params = BUF0;
 		if (!this.sig.sign_addr) {
-			return sign;
+			return params;
 		}
 		let qImei36 = this.device.qImei36 || this.device.qImei16;
-		if (qImei36 && this.apk.qua) {
+		if (this.apk.qua) {
+			const time = Date.now();
+			let post_params = {
+				qua: this.apk.qua,
+				uin: this.uin || 0,
+				cmd: cmd,
+				seq: seq,
+				android_id: this.device.android_id,
+				qimei36: qImei36 || this.device.android_id,
+				buffer: body.toString('hex'),
+				guid: this.device.guid.toString('hex'),
+			};
 			let url = new URL(this.sig.sign_addr);
-			let post_params = `qua=${this.apk.qua}&uin=${this.uin}&cmd=${cmd}&seq=${seq}&buffer=${body.toString('hex')}`;
-			url.pathname = '/sign';
-			const {data} = await axios.post(url.href, post_params, {
-				timeout: 10000,
-				headers: {
-					'User-Agent': `Dalvik/2.1.0 (Linux; U; Android ${this.device.version.release}; PCRT00 Build/N2G48H)`,
-					'Content-Type': "application/x-www-form-urlencoded"
-				}
-			}).catch(() => ({data: {code: -1}}));
-			this.emit("internal.verbose", `getSign ${cmd} result: ${JSON.stringify(data)}`, VerboseLevel.Debug);
-			if (data.code == 0) {
+			let path = url.pathname;
+			if (path.substring(path.length - 1) === '/') {
+				path += 'sign';
+			}
+			url.pathname = path;
+			const data = await get.bind(this)(url.href, post_params, true);
+			this.emit("internal.verbose", `getSign ${cmd} result(${Date.now() - time}ms): ${JSON.stringify(data)}`, VerboseLevel.Debug);
+			if (data.code === 0) {
 				const Data = data.data || {};
-				sign = this.generateSignPacket(Data.sign, Data.token, Data.extra);
+				params = this.generateSignPacket(Data.sign, Data.token, Data.extra);
 				let list = Data.ssoPacketList || Data.requestCallback || [];
 				if (list.length < 1 && cmd.includes('wtlogin')) {
 					this.requestToken().then();
 				} else {
 					this.ssoPacketListHandler(list).then();
 				}
-			} else if (data.code == 1) {
-				if (data.msg.includes('Uin is not registered.')) {
-					if (await this.apiRegister()) {
-						return await this.getSign(cmd, seq, body);
+			} else {
+				if (data.code === 1) {
+					if (data.msg.includes('Uin is not registered.')) {
+						if (await this.apiRegister.call(this)) {
+							return await this.getSign(cmd, seq, body);
+						}
 					}
 				}
-			} else {
-				this.emit("internal.verbose", `签名api异常： ${cmd} result: ${JSON.stringify(data)}`, VerboseLevel.Error);
+				this.emit("internal.verbose", `签名api异常： ${cmd} result(${Date.now() - time}ms): ${JSON.stringify(data)}`, VerboseLevel.Error);
 			}
 		}
-		return sign;
+		return params;
 	}
 
 	/** 签名接口注册 */
 	async apiRegister() {
 		let qImei36 = this.device.qImei36 || this.device.qImei16;
+		const time = Date.now();
 		let post_params = {
-			uin: this.uin,
+			uin: this.uin || 0,
 			android_id: this.device.android_id,
 			qimei36: qImei36,
 			guid: this.device.guid.toString('hex')
 		};
 		let url = new URL(this.sig.sign_addr);
-		url.pathname = '/register';
-		const {data} = await axios.get(url.href, {
-			params: post_params,
-			timeout: 15000,
-			headers: {
-				'User-Agent': `Dalvik/2.1.0 (Linux; U; Android ${this.device.version.release}; PCRT00 Build/N2G48H)`,
-				'Content-Type': "application/x-www-form-urlencoded"
-			}
-		}).catch(() => ({data: {code: -1}}));
-		this.emit("internal.verbose", `register result: ${JSON.stringify(data)}`, VerboseLevel.Debug);
+		let path = url.pathname;
+		if (path.substring(path.length - 1) === '/') {
+			path += 'register';
+		} else {
+			path = path.replace(/\/sign$/, '/register');
+		}
+		url.pathname = path;
+		const data = await get.bind(this)(url.href, post_params);
+		this.emit("internal.verbose", `register result(${Date.now() - time}ms): ${JSON.stringify(data)}`, VerboseLevel.Debug);
 		if (data.code == 0) {
 			return true;
-		} else {
-			this.emit("internal.verbose", `签名api注册异常：result: ${JSON.stringify(data)}`, VerboseLevel.Error);
 		}
+		;
+		this.emit("internal.verbose", `签名api注册异常：result(${Date.now() - time}ms): ${JSON.stringify(data)}`, VerboseLevel.Error);
 		return false;
 	}
 
 	generateSignPacket(sign: String, token: String, extra: String) {
-		let qImei36 = this.device.qImei36 || this.device.qImei16;
 		let pb_data = {
-			9: 1,
-			12: qImei36,
-			14: 0,
-			16: this.uin,
-			18: 0,
-			19: 1,
-			20: 1,
-			21: 0,
-			24: {
-				1: Buffer.from(sign, 'hex'),
-				2: Buffer.from(token, 'hex'),
-				3: Buffer.from(extra, 'hex')
-			},
-			28: 3
-		};
+			1: Buffer.from(sign, 'hex'),
+			2: Buffer.from(token, 'hex'),
+			3: Buffer.from(extra, 'hex')
+		}
 		return Buffer.from(pb.encode(pb_data));
 	}
 
+	buildReserveFields(cmd: string, sec_info: any) {
+		let qImei36 = this.device.qImei36 || this.device.qImei16;
+		let reserveFields;
+		if (this.apk.ssover >= 20 && false) {
+			reserveFields = {
+				9: 1,
+				11: 2052,
+				12: qImei36,
+				14: 0,
+				15: '',
+				16: this.uin || '',
+				18: 0,
+				19: 1,
+				20: 1,
+				21: 32,
+				24: sec_info,
+				26: 100,
+				28: 3
+			};
+		} else {
+			reserveFields = {
+				9: 1,
+				12: qImei36,
+				14: 0,
+				16: this.uin,
+				18: 0,
+				19: 1,
+				20: 1,
+				21: 0,
+				24: sec_info,
+				28: 3
+			};
+		}
+		return Buffer.from(pb.encode(reserveFields));
+	}
+
 	async requestToken() {
-		if ((Date.now() - this.sig.requestTokenTime) >= (50 * 60 * 1000)) {
+		if ((Date.now() - this.sig.requestTokenTime) >= (60 * 60 * 1000)) {
 			this.sig.requestTokenTime = Date.now();
 			let list = await this.requestSignToken();
 			await this.ssoPacketListHandler(list);
 		}
 	}
 
-	async requestSignToken() {
+	async requestSignToken(): Promise<[]> {
 		if (!this.sig.sign_addr) {
 			return [];
 		}
 		let qImei36 = this.device.qImei36 || this.device.qImei16;
-		let post_params = {
-			ver: this.apk.ver,
-			qua: this.apk.qua,
-			uin: this.uin,
-			androidId: this.device.android_id,
-			qimei36: qImei36,
-			guid: this.device.guid.toString('hex'),
-		};
-		let url = new URL(this.sig.sign_addr);
-		url.pathname = '/request_token';
-		const {data} = await axios.get(url.href, {
-			params: post_params,
-			timeout: 10000,
-			headers: {
-				'User-Agent': `Dalvik/2.1.0 (Linux; U; Android ${this.device.version.release}; PCRT00 Build/N2G48H)`,
-				'Content-Type': "application/x-www-form-urlencoded"
+		if (this.apk.qua) {
+			const time = Date.now();
+			let post_params = {
+				uin: this.uin || 0,
+				android_id: this.device.android_id,
+				qimei36: qImei36 || this.device.android_id,
+				guid: this.device.guid.toString('hex'),
+			};
+			let url = new URL(this.sig.sign_addr);
+			let path = url.pathname;
+			if (path.substring(path.length - 1) === '/') {
+				path += 'request_token';
+			} else {
+				path = path.replace(/\/sign$/, '/request_token');
 			}
-		}).catch(() => ({data: {code: -1}}));
-		this.emit("internal.verbose", `requestSignToken result: ${JSON.stringify(data)}`, VerboseLevel.Debug);
-		if (data.code >= 0) {
-			let ssoPacketList = data.data?.ssoPacketList || data.data?.requestCallback || data.data;
-			if (!ssoPacketList || ssoPacketList.length < 1) return [];
-			return ssoPacketList;
+			url.pathname = path;
+			const data = await get.bind(this)(url.href, post_params);
+			this.emit("internal.verbose", `requestSignToken result(${Date.now() - time}ms): ${JSON.stringify(data)}`, VerboseLevel.Debug);
+			if (data.code === 0) {
+				let ssoPacketList = data.data?.ssoPacketList || data.data?.requestCallback || data.data;
+				if (!ssoPacketList || ssoPacketList.length < 1) return [];
+				return ssoPacketList;
+			} else if (data.code === 1) {
+				if (data.msg.includes('Uin is not registered.')) {
+					if (await this.apiRegister.call(this)) {
+						return await this.requestSignToken();
+					}
+				}
+			}
 		}
 		return [];
 	}
 
 	async ssoPacketListHandler(list: any) {
+		let handle = (list: any) => {
+			let new_list: Packet[] = [];
+			for (let val of list) {
+				try {
+					let data = pb.decode(Buffer.from(val.body, 'hex'));
+					val.type = data[1].toString();
+				} catch (err) {
+				}
+				new_list.push(val);
+			}
+			return new_list;
+		};
 		if (list === null && this.isOnline()) {
 			if (this.ssoPacketList.length > 0) {
 				list = this.ssoPacketList;
 				this.ssoPacketList = [];
 			}
 		}
-		if (!list || list.length < 1) return;
+		if (!list || !list.length) return;
 		if (!this.isOnline()) {
-			let handle = (list: any) => {
-				let new_list = [];
-				for (let val of list) {
-					try {
-						let data = pb.decode(Buffer.from(val.body, 'hex'));
-						val.type = data[1].toString();
-					} catch (err) {
-					}
-					new_list.push(val);
-				}
-				return new_list;
-			};
 			list = handle(list);
 			if (this.ssoPacketList.length > 0) {
+				let list1 = this.ssoPacketList;
+				this.ssoPacketList = [];
 				for (let val of list) {
-					let ssoPacket: any = this.ssoPacketList.find((data: any) => {
+					let ssoPacket: any = list1.find((data: any) => {
 						return data.cmd === val.cmd && data.type === val.type;
 					});
 					if (ssoPacket) {
 						ssoPacket.body = val.body;
 					} else {
-						this.ssoPacketList.push(val);
+						list1.push(val);
 					}
 				}
 			} else {
@@ -487,12 +557,12 @@ export class BaseClient extends EventEmitter {
 
 		for (let ssoPacket of list) {
 			let cmd = ssoPacket.cmd;
-			let body = Buffer.from(ssoPacket.body, 'hex');
-			let callbackId = ssoPacket.callbackId;
+			let body = Buffer.from(ssoPacket.body as unknown as string, 'hex');
+			let callbackId = ssoPacket.callbackId as number;
 			let payload = await this.sendUni(cmd, body);
 			this.emit("internal.verbose", `sendUni ${cmd} result: ${payload.toString('hex')}`, VerboseLevel.Debug);
 			if (callbackId > -1) {
-				await this.ssoPacketListHandler(await this.submitSsoPacket(cmd, callbackId, payload));
+				await this.submitSsoPacket(cmd, callbackId, payload);
 			}
 		}
 	}
@@ -502,33 +572,34 @@ export class BaseClient extends EventEmitter {
 			return [];
 		}
 		let qImei36 = this.device.qImei36 || this.device.qImei16;
-		let post_params = {
-			ver: this.apk.ver,
-			qua: this.apk.qua,
-			uin: this.uin,
-			cmd: cmd,
-			callbackId: callbackId,
-			callback_id: callbackId,
-			androidId: this.device.android_id,
-			qimei36: qImei36,
-			buffer: body.toString('hex'),
-			guid: this.device.guid.toString('hex'),
-		};
-		let url = new URL(this.sig.sign_addr);
-		url.pathname = '/submit';
-		const {data} = await axios.get(url.href, {
-			params: post_params,
-			timeout: 10000,
-			headers: {
-				'User-Agent': `Dalvik/2.1.0 (Linux; U; Android ${this.device.version.release}; PCRT00 Build/N2G48H)`,
-				'Content-Type': "application/x-www-form-urlencoded"
+		if (this.apk.qua) {
+			const time = Date.now();
+			let post_params = {
+				ver: this.apk.ver,
+				qua: this.apk.qua,
+				uin: this.uin || 0,
+				cmd: cmd,
+				callback_id: callbackId,
+				android_id: this.device.android_id,
+				qimei36: qImei36 || this.device.android_id,
+				buffer: body.toString('hex'),
+				guid: this.device.guid.toString('hex'),
+			};
+			let url = new URL(this.sig.sign_addr);
+			let path = url.pathname;
+			if (path.substring(path.length - 1) === '/') {
+				path += 'submit';
+			} else {
+				path = path.replace(/\/sign$/, '/submit');
 			}
-		}).catch(() => ({data: {code: -1}}));
-		this.emit("internal.verbose", `submitSsoPacket result: ${JSON.stringify(data)}`, VerboseLevel.Debug);
-		if (data.code >= 0) {
-			let ssoPacketList = data.data?.ssoPacketList || data.data?.requestCallback || data.data;
-			if (!ssoPacketList || ssoPacketList.length < 1) return [];
-			return ssoPacketList;
+			url.pathname = path;
+			const data = await get.bind(this)(url.href, post_params);
+			this.emit("internal.verbose", `submitSsoPacket result(${Date.now() - time}ms): ${JSON.stringify(data)}`, VerboseLevel.Debug);
+			if (data.code === 0) {
+				let ssoPacketList = data.data?.ssoPacketList || data.data?.requestCallback || data.data;
+				if (!ssoPacketList || ssoPacketList.length < 1) return [];
+				return ssoPacketList;
+			}
 		}
 		return [];
 	}
@@ -543,54 +614,71 @@ export class BaseClient extends EventEmitter {
 		this.sig.tgtgt = randomBytes(16)
 		this[ECDH] = new Ecdh
 		const t = tlv.getPacker(this)
-		let body = new Writer()
+		const tlvs = [
+			t(0x1),
+			t(0x8),
+			t(0x18),
+			t(0x100),
+			t(0x106, md5pass),
+			t(0x107),
+			t(0x116),
+			t(0x141),
+			t(0x142),
+			t(0x144),
+			t(0x145),
+			t(0x147),
+			t(0x154),
+			t(0x177),
+			t(0x187),
+			t(0x188),
+			t(0x191),
+			t(0x511),
+			t(0x516),
+			t(0x521, 0),
+			t(0x525),
+			t(0x542),
+			t(0x548)
+		]
+		if (this.apk.ssover >= 12) {
+			tlvs.push(t(0x544, -1, await this.getT544("810_9")))
+			if (this.sig.t553) tlvs.push(t(0x553))
+		}
+		if (this.device.qImei16) tlvs.push(t(0x545, this.device.qImei16))
+		else {
+			tlvs.push(t(0x194))
+			tlvs.push(t(0x202))
+		}
+		let writer = new Writer()
 			.writeU16(9)
-			.writeU16(25)
-			.writeBytes(t(0x18))
-			.writeBytes(t(0x1))
-			.writeBytes(t(0x106, md5pass))
-			.writeBytes(t(0x116))
-			.writeBytes(t(0x100))
-			.writeBytes(t(0x107))
-			.writeBytes(t(0x142))
-			.writeBytes(t(0x144))
-			.writeBytes(t(0x145))
-			.writeBytes(t(0x147))
-			.writeBytes(t(0x154))
-			.writeBytes(t(0x141))
-			.writeBytes(t(0x8))
-			.writeBytes(t(0x511))
-			.writeBytes(t(0x187))
-			.writeBytes(t(0x188))
-			.writeBytes(t(0x194))
-			.writeBytes(t(0x191))
-			.writeBytes(t(0x202))
-			.writeBytes(t(0x177))
-			.writeBytes(t(0x516))
-			.writeBytes(t(0x521))
-			.writeBytes(t(0x525))
-			.writeBytes(t(0x544, -1, 9, await this.getT544("810_9")))
-			.writeBytes(t(0x545))
-			.read()
-		this[FN_SEND_LOGIN]("wtlogin.login", body)
+			.writeU16(tlvs.length)
+		for (let tlv of tlvs) writer.writeBytes(tlv)
+		this[FN_SEND_LOGIN]("wtlogin.login", writer.read())
 	}
 
 	/** 收到滑动验证码后，用于提交滑动验证码 */
 	async submitSlider(ticket: string) {
+		try {
+			if (this.sig.t546.length) this.sig.t547 = this.calcPoW(this.sig.t546)
+		} catch {
+		}
 		ticket = String(ticket).trim()
 		const t = tlv.getPacker(this)
-		let tlv_count = this.sig.t547.length ? 6 : 5
-		if (this.apk.ssover <= 12) tlv_count--
-		const body = new Writer()
+		const tlvs = [
+			t(0x8),
+			t(0x104),
+			t(0x116),
+			t(0x193, ticket),
+		]
+		if (this.apk.ssover >= 12) {
+			tlvs.push(t(0x544, -1, await this.getT544("810_2")))
+			if (this.sig.t553) tlvs.push(t(0x553))
+		}
+		if (this.sig.t547.length) tlvs.push(t(0x547))
+		let writer = new Writer()
 			.writeU16(2)
-			.writeU16(tlv_count)
-			.writeBytes(t(0x193, ticket))
-			.writeBytes(t(0x8))
-			.writeBytes(t(0x104))
-			.writeBytes(t(0x116))
-		if (this.sig.t547.length) body.writeBytes(t(0x547))
-		body.writeBytes(t(0x544, -1, 2, await this.getT544("810_2")))
-		this[FN_SEND_LOGIN]("wtlogin.login", body.read())
+			.writeU16(tlvs.length)
+		for (let tlv of tlvs) writer.writeBytes(tlv)
+		this[FN_SEND_LOGIN]("wtlogin.login", writer.read())
 	}
 
 	/** 收到设备锁验证请求后，用于发短信 */
@@ -615,21 +703,25 @@ export class BaseClient extends EventEmitter {
 		if (Buffer.byteLength(code) !== 6)
 			code = "123456"
 		const t = tlv.getPacker(this)
-		let tlv_count = 8
-		if (this.apk.ssover <= 12) tlv_count--
-		const writer = new Writer()
+		const tlvs = [
+			t(0x8),
+			t(0x104),
+			t(0x116),
+			t(0x174),
+			t(0x17c, code),
+			t(0x198),
+			t(0x401)
+		]
+		if (this.apk.ssover >= 12) {
+			tlvs.push(t(0x544, -1, await this.getT544("810_7")))
+			if (this.sig.t553) tlvs.push(t(0x553))
+		}
+		if (this.sig.t547.length) tlvs.push(t(0x547))
+		let writer = new Writer()
 			.writeU16(7)
-			.writeU16(tlv_count)
-			.writeBytes(t(0x8))
-			.writeBytes(t(0x104))
-			.writeBytes(t(0x116))
-			.writeBytes(t(0x174))
-			.writeBytes(t(0x17c, code))
-			.writeBytes(t(0x401))
-			.writeBytes(t(0x198))
-			.writeBytes(t(0x544, -1, 7, await this.getT544("810_7")))
-			.read()
-		this[FN_SEND_LOGIN]("wtlogin.login", writer)
+			.writeU16(tlvs.length)
+		for (let tlv of tlvs) writer.writeBytes(tlv)
+		this[FN_SEND_LOGIN]("wtlogin.login", writer.read())
 	}
 
 	/** 获取登录二维码(模拟手表协议扫码登录) */
@@ -826,6 +918,72 @@ export class BaseClient extends EventEmitter {
 		}
 	}
 
+	calcPoW(data: any) {
+		if (!data || data.length === 0) return Buffer.alloc(0);
+		const stream = Readable.from(data, {objectMode: false});
+		const version = stream.read(1).readUInt8();
+		const typ = stream.read(1).readUInt8();
+		const hashType = stream.read(1).readUInt8();
+		let ok = stream.read(1).readUInt8() === 0;
+		const maxIndex = stream.read(2).readUInt16BE();
+		const reserveBytes = stream.read(2);
+		const src = stream.read(stream.read(2).readUInt16BE());
+		const tgt = stream.read(stream.read(2).readUInt16BE());
+		const cpy = stream.read(stream.read(2).readUInt16BE());
+		if (hashType !== 1) {
+			this.emit("internal.verbose", `Unsupported tlv546 hash type ${hashType}`, VerboseLevel.Warn);
+			return Buffer.alloc(0);
+		}
+		let inputNum = BigInt("0x" + src.toString("hex"));
+		switch (typ) {
+			case 1:
+				// TODO
+				// See https://github.com/mamoe/mirai/blob/cc7f35519ea7cc03518a57dc2ee90d024f63be0e/mirai-core/src/commonMain/kotlin/network/protocol/packet/login/wtlogin/WtLoginExt.kt#L207
+				this.emit("internal.verbose", `Unsupported tlv546 algorithm type ${typ}`, VerboseLevel.Warn);
+				break;
+			case 2:
+				// Calc SHA256
+				let dst;
+				let elp = 0, cnt = 0;
+				if (tgt.length === 32) {
+					const start = Date.now();
+					let hash = createHash("sha256").update(Buffer.from(inputNum.toString(16).padStart(256, "0"), "hex")).digest();
+					while (Buffer.compare(hash, tgt) !== 0) {
+						inputNum++;
+						hash = createHash("sha256").update(Buffer.from(inputNum.toString(16).padStart(256, "0"), "hex")).digest();
+						cnt++;
+						if (cnt > 6000000) {
+							this.emit("internal.verbose", "Calculating PoW cost too much time, maybe something wrong", VerboseLevel.Error);
+							throw new Error("Calculating PoW cost too much time, maybe something wrong");
+						}
+					}
+					ok = true;
+					dst = Buffer.from(inputNum.toString(16).padStart(256, "0"), "hex");
+					elp = Date.now() - start;
+					this.emit("internal.verbose", `Calculating PoW of plus ${cnt} times cost ${elp} ms`, VerboseLevel.Debug);
+				}
+				if (!ok) return Buffer.alloc(0);
+				const body = new Writer()
+					.writeU8(version)
+					.writeU8(typ)
+					.writeU8(hashType)
+					.writeU8(ok ? 1 : 0)
+					.writeU16(maxIndex)
+					.writeBytes(reserveBytes)
+					.writeTlv(src)
+					.writeTlv(tgt)
+					.writeTlv(cpy);
+				if (dst) body.writeTlv(dst)
+				body.writeU32(elp)
+					.writeU32(cnt);
+				return body.read();
+			default:
+				this.emit("internal.verbose", `Unsupported tlv546 algorithm type ${typ}`, VerboseLevel.Warn);
+				break;
+		}
+		return Buffer.alloc(0);
+	}
+
 	/** 发送一个业务包不等待返回 */
 	async writeUni(cmd: string, body: Uint8Array, seq = 0) {
 		this.statistics.sent_pkt_cnt++
@@ -854,12 +1012,12 @@ async function buildUniPktSign(this: BaseClient, cmd: string, body: Uint8Array, 
 function buildUniPkt(this: BaseClient, cmd: string, body: Uint8Array, seq = 0, BodySign: Buffer = BUF0) {
 	seq = seq || this[FN_NEXT_SEQ]()
 	this.emit("internal.verbose", `send:${cmd} seq:${seq}`, VerboseLevel.Debug)
-	let len = cmd.length + 20
+	let len: number
 	const sso = new Writer()
 		.writeWithLength(new Writer()
 			.writeWithLength(cmd)
 			.writeWithLength(this.sig.session)
-			.writeWithLength(BodySign || BUF0)
+			.writeWithLength(this.buildReserveFields(cmd, BodySign))
 			.read())
 		.writeWithLength(body)
 		.read();
@@ -890,8 +1048,11 @@ function ssoListener(this: BaseClient, cmd: string, payload: Buffer, seq: number
 		}
 			break
 		case "QualityTest.PushList":
+			this.writeUni(cmd, BUF0, seq).then()
+			break
 		case "OnlinePush.SidTicketExpired":
 			this.writeUni(cmd, BUF0, seq).then()
+			refreshToken.call(this, true).then()
 			break
 		case "ConfigPushSvc.PushReq": {
 			if (payload[0] === 0)
@@ -1024,7 +1185,7 @@ async function register(this: BaseClient, logout = false, reflush = false) {
 		const payload = await this[FN_SEND](pkt, 10, "StatSvc.register", seq)
 		if (logout) return
 		const rsp = jce.decodeWrapper(payload)
-		const result = rsp[9] ? true : false
+		const result = !!rsp[9]
 		if (!result && !reflush) {
 			this.emit("internal.error.token")
 		} else {
@@ -1039,7 +1200,7 @@ async function register(this: BaseClient, logout = false, reflush = false) {
 						this.emit("internal.verbose", "heartbeat timeout x 2", VerboseLevel.Error)
 						this[NET].destroy()
 					})
-				}).then(refreshToken.bind(this))
+				}).then(refreshToken.bind(this, false))
 			}, this.interval * 1000)
 		}
 	} catch {
@@ -1058,8 +1219,8 @@ async function syncTimeDiff(this: BaseClient) {
 	}).catch(NOOP)
 }
 
-async function refreshToken(this: BaseClient) {
-	if (!this.isOnline() || timestamp() - this.sig.emp_time < 14000)
+async function refreshToken(this: BaseClient, force: boolean = false) {
+	if ((!this.isOnline() || timestamp() - this.sig.emp_time < 14000) && !force)
 		return
 	const t = tlv.getPacker(this)
 	const body = new Writer()
@@ -1126,7 +1287,7 @@ async function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, t
 	if (cmd === "wtlogin.trans_emp") {
 		uin = 0
 		cmdid = 0x812
-		subappid = getApkInfo(Platform.Watch).subid
+		// subappid = getApkInfo(Platform.Watch).subid
 	}
 	if (type === 2) {
 		body = new Writer()
@@ -1157,7 +1318,7 @@ async function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, t
 	}
 
 	let BodySign = BUF0;
-	if (this.signLoginCmd.includes(cmd)) {
+	if (this.signCmd.includes(cmd)) {
 		BodySign = await this.getSign(cmd, seq, Buffer.from(body));
 	}
 
@@ -1174,7 +1335,7 @@ async function buildLoginPacket(this: BaseClient, cmd: LoginCmd, body: Buffer, t
 			.writeU32(4)
 			.writeU16(this.sig.ksid.length + 2)
 			.writeBytes(this.sig.ksid)
-			.writeWithLength(BodySign)
+			.writeWithLength(this.buildReserveFields(cmd, BodySign))
 			.read()
 		)
 		.writeWithLength(body)
@@ -1219,52 +1380,6 @@ async function buildCode2dPacket(this: BaseClient, cmdid: number, head: number, 
 	return await buildLoginPacket.call(this, "wtlogin.trans_emp", body)
 }
 
-function calcPoW(this: BaseClient, data: any) {
-	if (!data || data.length === 0) return Buffer.alloc(0);
-	const stream = Readable.from(data, {objectMode: false});
-	const a = stream.read(1).readUInt8();                    // a
-	const typ = stream.read(1).readUInt8();                  // typ
-	const c = stream.read(1).readUInt8();                    // c
-	let ok = stream.read(1).readUInt8() !== 0;               // ok
-	const e = stream.read(2).readUInt16BE();                 // e
-	const f = stream.read(2).readUInt16BE();                 // f
-	const src = stream.read(stream.read(2).readUInt16BE());  // scr
-	const tgt = stream.read(stream.read(2).readUInt16BE());  // tgt
-	const cpy = stream.read(stream.read(2).readUInt16BE());  // cpy
-
-	let dst = Buffer.alloc(0)
-	let elp = 0, cnt = 0
-	if (typ === 2 && tgt.length === 32) {
-		let tmp = BigInt("0x" + src.toString("hex"));
-		const start = Date.now()
-		let hash = createHash("sha256").update(Buffer.from(tmp.toString(16), "hex")).digest()
-		while (Buffer.compare(hash, tgt)) {
-			tmp++
-			hash = createHash("sha256").update(Buffer.from(tmp.toString(16), "hex")).digest()
-			cnt++
-		}
-		ok = true
-		dst = Buffer.from(tmp.toString(16), "hex")
-		elp = Date.now() - start
-	}
-	const writer = new Writer()
-		.writeU8(a)
-		.writeU8(typ)
-		.writeU8(c)
-		.writeU8(ok ? 1 : 0)
-		.writeU16(e)
-		.writeU16(f)
-		.writeTlv(src)
-		.writeTlv(tgt)
-		.writeTlv(cpy)
-	if (ok) {
-		writer.writeTlv(dst)
-			.writeU32(elp)
-			.writeU32(cnt)
-	}
-	return writer.read()
-}
-
 function decodeT119(this: BaseClient, t119: Buffer) {
 	const r = Readable.from(tea.decrypt(t119, this.sig.tgtgt), {objectMode: false})
 	r.read(2)
@@ -1304,7 +1419,7 @@ function decodeLoginResponse(this: BaseClient, payload: Buffer): any {
 	const type = r.read(1).readUInt8() as number
 	r.read(2)
 	const t = readTlv(r)
-	if (t[0x546]) this.sig.t547 = calcPoW.call(this, t[0x546])
+	if (t[0x546]) this.sig.t546 = t[0x546]
 	if (type === 204) {
 		this.sig.t104 = t[0x104]
 		this.emit("internal.verbose", "unlocking...", VerboseLevel.Mark)
@@ -1354,6 +1469,14 @@ function decodeLoginResponse(this: BaseClient, payload: Buffer): any {
 		return this.emit("internal.verify", t[0x204]?.toString() || "", phone)
 	}
 
+	if (type === 235) {
+		return this.emit("internal.error.login", type, `[登陆失败](${type})当前设备信息被拉黑，建议删除package.json后重新登录！`)
+	}
+
+	if (type === 237) {
+		return this.emit("internal.error.login", type, `[登陆失败](${type})当前QQ登录频繁，暂时被限制登录，建议更换QQ或稍后再尝试登录！`)
+	}
+
 	if (t[0x149]) {
 		const stream = Readable.from(t[0x149], {objectMode: false})
 		stream.read(2)
@@ -1371,4 +1494,28 @@ function decodeLoginResponse(this: BaseClient, payload: Buffer): any {
 	}
 
 	this.emit("internal.error.login", type, `[登陆失败]未知错误`)
+}
+
+async function get(this: BaseClient, url: string, params: object = {}, post: boolean = false) {
+	const config: any = {
+		timeout: 30000,
+		headers: {
+			'User-Agent': `Dalvik/2.1.0 (Linux; U; Android ${this.device.version.release}; PCRT00 Build/N2G48H)`,
+			'Content-Type': "application/x-www-form-urlencoded"
+		}
+	};
+	let data: any = {code: -1};
+	let num: number = 0;
+	while (data.code == -1 && num < 3) {
+		if (num > 0) await new Promise((resolve) => setTimeout(resolve, 2000));
+		num++;
+		if (post) {
+			data = await axios.post(url, params, config).catch(err => ({data: {code: -1, msg: err?.message}}));
+		} else {
+			config.params = params;
+			data = await axios.get(url, config).catch(err => ({data: {code: -1, msg: err?.message}}));
+		}
+		data = data.data;
+	}
+	return data;
 }

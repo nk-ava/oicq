@@ -3,6 +3,7 @@ import {createHash, randomBytes} from "crypto"
 import {formatDateTime, md5, randomString} from "./constants"
 import axios from "axios";
 import {BaseClient, VerboseLevel} from "./base-client";
+import {Version} from "../client";
 
 const secret = "ZdJqM15EeO2zWc08"
 const ws = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -108,26 +109,181 @@ export enum Platform {
 	iPad = 5,
 }
 
-export type Apk = typeof mobile
+export type Apk = {
+	id: string
+	app_key: string
+	name: string
+	version: string
+	ver: string
+	sign: Buffer
+	buildtime: number
+	appid: number
+	subid: number
+	bitmap: number
+	main_sig_map: number
+	sub_sig_map: number
+	sdkver: string
+	display: string
+	qua: string
+	ssover: number
+}
 
 //android
 const mobile = {
 	id: "com.tencent.mobileqq",
-	app_key: '0S200MNJT807V3GE',
-	name: "A8.9.63.11390",
-	version: "8.9.63.11390",
-	ver: "8.9.63",
-	sign: Buffer.from([0xA6, 0xB7, 0x45, 0xBF, 0x24, 0xA2, 0xC2, 0x77, 0x52, 0x77, 0x16, 0xF6, 0xF3, 0x6E, 0xB6, 0x8D]),
-	buildtime: 1685069178,
 	appid: 16,
-	subid: 537164840,
-	bitmap: 150470524,
+	app_key: '0S200MNJT807V3GE',
+	sign: Buffer.from('A6 B7 45 BF 24 A2 C2 77 52 77 16 F6 F3 6E B6 8D'.split(' ').map(s => parseInt(s, 16))),
 	main_sig_map: 16724722,
-	sub_sig_map: 0x10400,
-	sdkver: "6.0.0.2546",
-	display: "Android",
-	qua: 'V1_AND_SQ_8.9.63_4194_YYB_D',
-	ssover: 20,
+	sub_sig_map: 66560,
+	display: "Android"
+}
+
+const mobileMap: { [key: string]: Apk } = {
+	"8.9.88": {
+		name: "A8.9.88.46a07457",
+		version: "8.9.88.13035",
+		ver: "8.9.88",
+		buildtime: 1697015435,
+		subid: 537182769,
+		bitmap: 150470524,
+		sdkver: "6.0.0.2556",
+		qua: 'V1_AND_SQ_8.9.88_4852_YYB_D',
+		ssover: 21,
+		...mobile
+	},
+	"8.9.85": {
+		name: "A8.9.85.3377f9bf",
+		version: "8.9.85.12820",
+		ver: "8.9.85",
+		buildtime: 1697015435,
+		subid: 537180568,
+		bitmap: 150470524,
+		sdkver: "6.0.0.2556",
+		qua: 'V1_AND_SQ_8.9.85_4766_YYB_D',
+		ssover: 21,
+		...mobile
+	},
+	"8.9.83": {
+		name: "A8.9.83.c9a61e5e",
+		version: "8.9.83.12605",
+		ver: "8.9.83",
+		buildtime: 1691565978,
+		subid: 537178646,
+		bitmap: 150470524,
+		sdkver: "6.0.0.2554",
+		qua: 'V1_AND_SQ_8.9.83_4680_YYB_D',
+		ssover: 20,
+		...mobile
+	},
+	"8.9.80": {
+		name: "A8.9.80.57a42f50",
+		version: "8.9.80.12440",
+		ver: "8.9.80",
+		buildtime: 1691565978,
+		subid: 537176863,
+		bitmap: 150470524,
+		sdkver: "6.0.0.2554",
+		qua: 'V1_AND_SQ_8.9.80_4614_YYB_D',
+		ssover: 20,
+		...mobile
+	},
+	"8.9.78": {
+		name: "A8.9.78.d5d9d71d",
+		version: "8.9.78.12275",
+		ver: "8.9.78",
+		buildtime: 1691565978,
+		subid: 537175315,
+		bitmap: 150470524,
+		sdkver: "6.0.0.2554",
+		qua: 'V1_AND_SQ_8.9.78_4548_YYB_D',
+		ssover: 20,
+		...mobile
+	},
+	"8.9.76": {
+		name: "A8.9.76.c71a1fa8",
+		version: "8.9.76.12115",
+		ver: "8.9.76",
+		buildtime: 1691565978,
+		subid: 537173477,
+		bitmap: 150470524,
+		sdkver: "6.0.0.2554",
+		qua: 'V1_AND_SQ_8.9.76_4484_YYB_D',
+		ssover: 20,
+		...mobile
+	},
+	"8.9.75": {
+		name: "A8.9.75.354d41fc",
+		version: "8.9.75.12110",
+		ver: "8.9.75",
+		buildtime: 1691565978,
+		subid: 537173381,
+		bitmap: 150470524,
+		sdkver: "6.0.0.2554",
+		qua: 'V1_AND_SQ_8.9.75_4482_YYB_D',
+		ssover: 20,
+		...mobile
+	},
+	"8.9.73": {
+		name: "A8.9.73.11945",
+		version: "8.9.73.11945",
+		ver: "8.9.73",
+		buildtime: 1690371091,
+		subid: 537171689,
+		bitmap: 150470524,
+		sdkver: "6.0.0.2553",
+		qua: 'V1_AND_SQ_8.9.73_4416_YYB_D',
+		ssover: 20,
+		...mobile
+	},
+	"8.9.71": {
+		name: "A8.9.71.9fd08ae5",
+		version: "8.9.71.11735",
+		ver: "8.9.71",
+		buildtime: 1688720082,
+		subid: 537170024,
+		bitmap: 150470524,
+		sdkver: "6.0.0.2551",
+		qua: 'V1_AND_SQ_8.9.71_4332_YYB_D',
+		ssover: 20,
+		...mobile
+	},
+	"8.9.70": {
+		name: "A8.9.70.b4332bd3",
+		version: "8.9.70.11730",
+		ver: "8.9.70",
+		buildtime: 1688720082,
+		subid: 537169928,
+		bitmap: 150470524,
+		sdkver: "6.0.0.2551",
+		qua: 'V1_AND_SQ_8.9.70_4330_YYB_D',
+		ssover: 20,
+		...mobile
+	},
+	"8.9.68": {
+		name: "A8.9.68.e757227e",
+		version: "8.9.68.11565",
+		ver: "8.9.68",
+		buildtime: 1687254022,
+		subid: 537168313,
+		bitmap: 150470524,
+		sdkver: "6.0.0.2549",
+		qua: 'V1_AND_SQ_8.9.68_4264_YYB_D',
+		ssover: 20,
+		...mobile
+	},
+	"8.9.63": {
+		name: "A8.9.63.5156de84",
+		version: "8.9.63.11390",
+		ver: "8.9.63",
+		buildtime: 1685069178,
+		subid: 537164840,
+		bitmap: 150470524,
+		sdkver: "6.0.0.2546",
+		qua: 'V1_AND_SQ_8.9.63_4194_YYB_D',
+		ssover: 20,
+		...mobile
+	}
 }
 
 //watch
@@ -170,10 +326,10 @@ const hd: Apk = {
 	ssover: 12
 }
 
-const apklist: { [platform in Platform]: Apk } = {
-	[Platform.Android]: mobile,
+const apklist: { [platform in Platform]: Apk | { [key: string]: Apk } } = {
+	[Platform.Android]: mobileMap,
 	[Platform.aPad]: {
-		...mobile,
+		...mobileMap["8.9.63"],
 		subid: 537152242,
 		display: 'aPad'
 	},
@@ -187,11 +343,12 @@ const apklist: { [platform in Platform]: Apk } = {
 		ver: '8.9.33',
 		ssover: 19,
 		display: 'iPad'
-	},
+	}
 }
 
-export function getApkInfo(p: Platform): Apk {
-	return apklist[p] || apklist[Platform.Android]
+export function getApkInfo(p: Platform, version: Version = "8.9.63"): Apk {
+	if (p === Platform.Android) return (apklist[p] as { [key: string]: Apk })[version]
+	return apklist[p] as Apk || (apklist[Platform.Android] as { [key: string]: Apk })["8.9.63"]
 }
 
 export async function requestQImei(this: BaseClient) {

@@ -148,6 +148,9 @@ const map: { [tag: number]: (this: BaseClient, ...args: any[]) => Writer } = {
 	0x10a: function () {
 		return new Writer().writeBytes(this.sig.tgt)
 	},
+	0x112: function () {
+		return new Writer().writeTlv(String(this.uin));
+	},
 	0x116: function () {
 		return new Writer()
 			.writeU8(0)
@@ -206,12 +209,14 @@ const map: { [tag: number]: (this: BaseClient, ...args: any[]) => Writer } = {
 	},
 	0x147: function () {
 		return new Writer()
-			.writeU32(this.apk.appid)
-			.writeTlv(this.apk.version)
+			.writeU32(this.apk.appid).writeTlv(this.apk.version)
 			.writeTlv(this.apk.sign)
 	},
 	0x154: function () {
 		return new Writer().writeU32(this.sig.seq + 1)
+	},
+	0x16a: function (srm_token) {
+		return new Writer().writeBytes(srm_token)
 	},
 	0x16e: function () {
 		return new Writer().writeBytes(this.device.model)
@@ -316,6 +321,10 @@ const map: { [tag: number]: (this: BaseClient, ...args: any[]) => Writer } = {
 			.writeU16(0x536) // tag
 			.writeTlv(Buffer.from([0x1, 0x0])) // zero
 	},
+	0x523: function () {
+		return new Writer()
+			.writeTlv(Buffer.from([0x1, 0x0]))
+	},
 	0x52d: function () {
 		const d = this.device
 		const buf = pb.encode({
@@ -331,8 +340,11 @@ const map: { [tag: number]: (this: BaseClient, ...args: any[]) => Writer } = {
 		})
 		return new Writer().writeBytes(buf)
 	},
-	0x544: function (v: number, subCmd: number, signDate: Buffer) {
-		if (v === -1) {
+	0x542: function () {
+		return new Writer().writeBytes(Buffer.from([0x4A, 0x02, 0x60, 0x01]));
+	},
+	0x544: function (v: number, subCmd: number, signDate?: Buffer) {
+		if (signDate) {
 			return new Writer().writeBytes(signDate)
 		}
 		const salt = new Writer()
@@ -358,6 +370,35 @@ const map: { [tag: number]: (this: BaseClient, ...args: any[]) => Writer } = {
 	},
 	0x547: function () {
 		return new Writer().writeBytes(this.sig.t547);
+	},
+	0x548: function () {
+		// copy from https://github.com/Icalingua-plus-plus/oicq-icalingua-plus-plus/blob/master/lib/wtlogin/tlv.js
+		const src = crypto.randomBytes(128);
+		while (src[0] === 0 || src[0] === 255) src[0] = crypto.randomBytes(1)[0];
+		const srcNum = BigInt('0x' + src.toString("hex"));
+		const cnt = 10000;
+		const dstNum = srcNum + BigInt(cnt);
+		const dst = Buffer.from(dstNum.toString(16).padStart(256, "0"), "hex");
+		const tgt = crypto.createHash("sha256").update(dst).digest();
+		const writer = new Writer()
+			.writeU8(1) //version
+			.writeU8(2) //typ
+			.writeU8(1) //hashType
+			.writeU8(2) //ok
+			.writeU16(10) //maxIndex
+			.writeBytes(Buffer.from([0, 0])) //reserveBytes
+			.writeTlv(src)
+			.writeTlv(tgt)
+		const cpy = writer.read();
+		const t546 = writer
+			.writeBytes(cpy)
+			.writeTlv(cpy)
+			.read();
+		const t548 = this.calcPoW(t546);
+		return new Writer().writeBytes(t548);
+	},
+	0x553: function () {
+		return new Writer().writeBytes(this.sig.t553);
 	}
 }
 

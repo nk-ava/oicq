@@ -157,6 +157,7 @@ export class Client extends BaseClient {
 			cache_group_member: true,
 			reconn_interval: 5,
 			data_dir: path.join(require?.main?.path || process.cwd(), "data"),
+			ver: "8.9.63" as Version,
 			...conf,
 		}
 
@@ -171,7 +172,7 @@ export class Client extends BaseClient {
 			fs.writeFile(file, JSON.stringify(device, null, 2), NOOP)
 		}
 
-		super(uin, config.platform, device)
+		super(uin, config.platform, config.ver, device)
 
 		this.logger = log4js.getLogger(`[${this.apk.display}:${uin}]`)
 		;(this.logger as log4js.Logger).level = config.log_level
@@ -737,10 +738,27 @@ export interface Config {
 	ffprobe_path?: string
 	/** 请求签名接口 */
 	sign_api_addr?: string
+	/** QQ协议版本 */
+	ver: Version
 }
 
 /** 数据统计 */
 export type Statistics = Client["stat"]
+
+/** 协议版本 */
+export type Version =
+	"8.9.63"
+	| "8.9.68"
+	| "8.9.70"
+	| "8.9.71"
+	| "8.9.73"
+	| "8.9.75"
+	| "8.9.76"
+	| "8.9.78"
+	| "8.9.80"
+	| "8.9.83"
+	| "8.9.85"
+	| "8.9.88"
 
 function createDataDir(dir: string, uin: number) {
 	if (!fs.existsSync(dir))
